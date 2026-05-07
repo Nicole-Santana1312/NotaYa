@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
+import ProfilePanel from '../../components/ProfilePanel'
 import {
   GraduationCap, LogOut, BookOpen, Wrench,
   ChevronRight, Check, AlertCircle, Users,
-  Plus, Trash2
+  Plus, Trash2, UserCircle
 } from 'lucide-react'
 
 const StudentDashboard = () => {
@@ -198,6 +199,11 @@ const StudentDashboard = () => {
             onClick={() => setActiveTab('tutors')}>
             <Users size={18} /><span>Mis tutores</span>
           </div>
+          <div
+            style={{ ...styles.navItem, ...(activeTab === 'profile' ? styles.navActive : {}) }}
+            onClick={() => setActiveTab('profile')}>
+            <UserCircle size={18} /><span>Mi perfil</span>
+          </div>
         </nav>
         <div style={styles.sidebarFooter}>
           <div style={styles.userInfo}>
@@ -212,6 +218,10 @@ const StudentDashboard = () => {
       </div>
 
       <div style={styles.main}>
+        {activeTab === 'profile' ? (
+          <ProfilePanel roleLabel="Estudiante" />
+        ) : (
+          <>
         <div style={styles.topBar}>
           <div>
             <h1 style={styles.pageTitle}>
@@ -412,6 +422,8 @@ const StudentDashboard = () => {
               </div>
             )}
           </div>
+        )}
+          </>
         )}
       </div>
     </div>

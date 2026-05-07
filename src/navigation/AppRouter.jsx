@@ -24,10 +24,11 @@ const getDashboardPath = (role) => {
 }
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, profile, loading } = useAuth()
+  const { user, profile, loading, profileLoading, signOut } = useAuth()
 
-  if (loading) return <div>Cargando...</div>
+  if (loading || profileLoading) return <LoadingScreen />
   if (!user) return <Navigate to="/login" replace />
+  if (!profile) return <ProfileMissingScreen onSignOut={signOut} />
   if (allowedRoles && !allowedRoles.includes(profile?.role)) {
     return <Navigate to="/login" replace />
   }
@@ -35,22 +36,94 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   return children
 }
 
-const AppRouter = () => {
-  const { user, profile, loading } = useAuth()
+const LoadingScreen = () => (
+  <div style={{
+    minHeight: '100vh',
+    backgroundColor: '#F8FAFC',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+  }}>
+    <div style={{ textAlign: 'center' }}>
+      <div style={{
+        width: '48px',
+        height: '48px',
+        borderRadius: '50%',
+        border: '3px solid #E2E8F0',
+        borderTop: '3px solid #6C63FF',
+        margin: '0 auto 16px',
+        animation: 'spin 0.8s linear infinite',
+      }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <p style={{ color: '#94A3B8', fontSize: '14px', margin: 0 }}>Cargando...</p>
+    </div>
+  </div>
+)
 
-  if (loading) return <div>Cargando...</div>
+const ProfileMissingScreen = ({ onSignOut }) => (
+  <div style={{
+    minHeight: '100vh',
+    backgroundColor: '#F8FAFC',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    padding: '24px',
+  }}>
+    <div style={{
+      width: '100%',
+      maxWidth: '420px',
+      backgroundColor: '#FFFFFF',
+      border: '1px solid #E2E8F0',
+      borderRadius: '8px',
+      padding: '24px',
+      textAlign: 'center',
+      boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
+    }}>
+      <h1 style={{ margin: '0 0 8px', color: '#0F172A', fontSize: '20px' }}>
+        Perfil no disponible
+      </h1>
+      <p style={{ margin: '0 0 20px', color: '#64748B', fontSize: '14px', lineHeight: 1.5 }}>
+        Tu sesion esta activa, pero no encontramos un perfil asociado a esta cuenta.
+      </p>
+      <button
+        type="button"
+        onClick={onSignOut}
+        style={{
+          width: '100%',
+          height: '42px',
+          border: 'none',
+          borderRadius: '6px',
+          backgroundColor: '#0F172A',
+          color: '#FFFFFF',
+          fontSize: '14px',
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}
+      >
+        Cerrar sesion
+      </button>
+    </div>
+  </div>
+)
+
+const AppRouter = () => {
+  const { user, profile, loading, profileLoading, signOut } = useAuth()
+
+  if (loading || profileLoading) return <LoadingScreen />
 
   return (
     <BrowserRouter>
       <Routes>
         <Route
           path="/login"
-          element={!user ? <LoginScreen /> : <Navigate to={getDashboardPath(profile?.role)} replace />}
+          element={!user ? <LoginScreen /> : profile ? <Navigate to={getDashboardPath(profile.role)} replace /> : <ProfileMissingScreen onSignOut={signOut} />}
         />
 
         <Route
           path="/register"
-          element={!user ? <RegisterScreen /> : <Navigate to={getDashboardPath(profile?.role)} replace />}
+          element={!user || !profile ? <RegisterScreen /> : <Navigate to={getDashboardPath(profile.role)} replace />}
         />
 
         <Route path="/director" element={

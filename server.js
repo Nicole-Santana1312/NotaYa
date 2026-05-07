@@ -412,4 +412,64 @@ app.get('/api/tutor/grades/:studentId/:classroomId', async (req, res) => {
   }
 })
 
+// ─── COMPETENCIAS ──────────────────────────────────────────
+
+app.post('/api/competencies', async (req, res) => {
+  const { institution_id, name, description, type, subject_id } = req.body
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('competencies')
+      .insert({ institution_id, name, description, type, subject_id })
+      .select()
+    if (error) throw error
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
+app.get('/api/competencies/:institution_id', async (req, res) => {
+  const { institution_id } = req.params
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('competencies')
+      .select('*')
+      .eq('institution_id', institution_id)
+    if (error) throw error
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
+app.put('/api/competencies/:id', async (req, res) => {
+  const { id } = req.params
+  const updates = req.body
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('competencies')
+      .update(updates)
+      .eq('id', id)
+      .select()
+    if (error) throw error
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
+app.delete('/api/competencies/:id', async (req, res) => {
+  const { id } = req.params
+  try {
+    const { error } = await supabaseAdmin
+      .from('competencies')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+    res.json({ success: true })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
 app.listen(3001, () => console.log('Servidor corriendo en puerto 3001'))

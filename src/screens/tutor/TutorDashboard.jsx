@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
+import ProfilePanel from '../../components/ProfilePanel'
 import {
   GraduationCap, LogOut, Users, BookOpen,
   Wrench, ChevronDown, ChevronUp, TrendingUp, TrendingDown,
-  AlertCircle, CheckCircle
+  AlertCircle, CheckCircle, UserCircle
 } from 'lucide-react'
 
 const TutorDashboard = () => {
@@ -18,6 +19,7 @@ const TutorDashboard = () => {
   const [loadingGrades, setLoadingGrades] = useState(false)
   const [expandedSubject, setExpandedSubject] = useState(null)
   const [activeTab, setActiveTab] = useState('academic')
+  const [activeView, setActiveView] = useState('grades')
 
   useEffect(() => {
     fetchStudents()
@@ -223,7 +225,7 @@ const TutorDashboard = () => {
             students.map(student => (
               <div
                 key={student.id}
-                onClick={() => setSelectedStudent(student)}
+                onClick={() => { setSelectedStudent(student); setActiveView('grades') }}
                 style={{
                   ...styles.studentItem,
                   backgroundColor: selectedStudent?.id === student.id ? '#EEF2FF' : 'transparent',
@@ -248,6 +250,19 @@ const TutorDashboard = () => {
           )}
         </div>
 
+        <nav style={styles.profileNav}>
+          <div
+            style={{
+              ...styles.profileNavItem,
+              ...(activeView === 'profile' ? styles.profileNavItemActive : {}),
+            }}
+            onClick={() => setActiveView('profile')}
+          >
+            <UserCircle size={18} />
+            <span>Mi perfil</span>
+          </div>
+        </nav>
+
         <div style={styles.sidebarFooter}>
           <div style={styles.userInfo}>
             <div style={styles.userAvatar}>
@@ -266,6 +281,10 @@ const TutorDashboard = () => {
 
       {/* MAIN */}
       <div style={styles.main}>
+        {activeView === 'profile' ? (
+          <ProfilePanel roleLabel="Tutor" />
+        ) : (
+          <>
 
         {!selectedStudent ? (
           <div style={styles.emptyMain}>
@@ -565,6 +584,8 @@ const TutorDashboard = () => {
             )}
           </>
         )}
+          </>
+        )}
       </div>
     </div>
   )
@@ -583,6 +604,9 @@ const styles = {
   studentName: { fontSize: '13px', fontWeight: '600', color: '#1E293B', margin: '0 0 2px' },
   studentEmail: { fontSize: '11px', color: '#94A3B8', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '160px' },
   noStudentsText: { fontSize: '13px', color: '#94A3B8', padding: '8px 12px' },
+  profileNav: { padding: '10px 12px', borderTop: '1px solid #F1F5F9' },
+  profileNavItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '10px', fontSize: '14px', color: '#64748B', cursor: 'pointer' },
+  profileNavItemActive: { backgroundColor: '#EEF2FF', color: '#6C63FF', fontWeight: '600' },
   sidebarFooter: { padding: '16px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   userInfo: { display: 'flex', alignItems: 'center', gap: '10px' },
   userAvatar: { width: '34px', height: '34px', borderRadius: '50%', background: 'linear-gradient(135deg, #6C63FF, #4FACFE)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '600', flexShrink: 0 },

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
+import ProfilePanel from '../../components/ProfilePanel'
 import {
   GraduationCap, LogOut, Users, BookOpen,
   Plus, X, Eye, EyeOff, Check, School,
-  Pencil, Trash2
+  Pencil, Trash2, UserCircle
 } from 'lucide-react'
 
 const DirectorDashboard = () => {
@@ -23,6 +24,7 @@ const DirectorDashboard = () => {
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState('')
   const [success, setSuccess] = useState('')
+  const [activeView, setActiveView] = useState('dashboard')
 
   useEffect(() => { fetchData() }, [])
 
@@ -190,6 +192,14 @@ const DirectorDashboard = () => {
           <span style={styles.sidebarTitle}>NotaYa</span>
         </div>
         <nav style={styles.nav}>
+          <div
+            style={{ ...styles.navItem, ...(activeView === 'dashboard' ? styles.navItemActive : {}) }}
+            onClick={() => setActiveView('dashboard')}
+          ><School size={18} /><span>Panel</span></div>
+          <div
+            style={{ ...styles.navItem, ...(activeView === 'profile' ? styles.navItemActive : {}) }}
+            onClick={() => setActiveView('profile')}
+          ><UserCircle size={18} /><span>Mi perfil</span></div>
           <div style={styles.navItem}><School size={18} /><span>Mi institución</span></div>
           <div style={styles.navItem}><Users size={18} /><span>Coordinadores</span></div>
         </nav>
@@ -207,6 +217,10 @@ const DirectorDashboard = () => {
 
       {/* Main */}
       <div style={styles.main}>
+        {activeView === 'profile' ? (
+          <ProfilePanel roleLabel="Director" />
+        ) : (
+          <>
         <div style={styles.topBar}>
           <div>
             <h1 style={styles.pageTitle}>Panel del Director</h1>
@@ -304,6 +318,8 @@ const DirectorDashboard = () => {
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
 
       {/* Modal crear coordinador */}
@@ -471,6 +487,7 @@ const styles = {
   sidebarTitle: { fontSize: '18px', fontWeight: '700', color: '#1E293B', letterSpacing: '-0.5px' },
   nav: { padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
   navItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '10px', fontSize: '14px', color: '#64748B', cursor: 'pointer' },
+  navItemActive: { backgroundColor: '#EEF2FF', color: '#6C63FF', fontWeight: '600' },
   sidebarFooter: { padding: '16px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   userInfo: { display: 'flex', alignItems: 'center', gap: '10px' },
   userAvatar: { width: '34px', height: '34px', borderRadius: '50%', background: 'linear-gradient(135deg, #6C63FF, #4FACFE)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '600' },

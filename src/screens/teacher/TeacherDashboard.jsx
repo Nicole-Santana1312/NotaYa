@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
+import ProfilePanel from '../../components/ProfilePanel'
 import {
   GraduationCap, LogOut, BookOpen, Users, Plus, X,
-  Check, ChevronRight, Layers, Calendar, Wrench, AlertCircle, Trash2
+  Check, ChevronRight, Layers, Calendar, Wrench, AlertCircle, Trash2, UserCircle
 } from 'lucide-react'
 
 const TeacherDashboard = () => {
@@ -300,6 +301,13 @@ const TeacherDashboard = () => {
             <Layers size={18} />
             <span>Mis aulas</span>
           </div>
+          <div
+            style={{ ...styles.navItem, ...(activeView === 'profile' ? styles.navItemActive : {}) }}
+            onClick={() => setActiveView('profile')}
+          >
+            <UserCircle size={18} />
+            <span>Mi perfil</span>
+          </div>
         </nav>
 
         <div style={styles.sidebarFooter}>
@@ -322,6 +330,10 @@ const TeacherDashboard = () => {
 
       {/* MAIN */}
       <div style={styles.main}>
+        {activeView === 'profile' ? (
+          <ProfilePanel roleLabel={isWorkshop ? 'Profesor de Taller' : 'Profesor Academico'} />
+        ) : (
+          <>
 
         <div style={styles.topBar}>
           <div>
@@ -487,6 +499,8 @@ const TeacherDashboard = () => {
               </div>
             )}
           </div>
+        )}
+          </>
         )}
       </div>
 

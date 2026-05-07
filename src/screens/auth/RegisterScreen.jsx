@@ -1,7 +1,36 @@
-import { useState, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { GraduationCap, ArrowLeft, ArrowRight, Check } from 'lucide-react'
+import { GraduationCap, ArrowLeft, ArrowRight, Check, Mail } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../context/AuthContext'
+
+const REQUEST_TIMEOUT_MS = 15000
+const OTP_LENGTH = 8
+const OTP_VERIFY_TYPES = ['otp']
+
+const withTimeout = (promise, timeoutMs = REQUEST_TIMEOUT_MS) => {
+  let timeoutId
+
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error('La solicitud tardo demasiado. Intenta de nuevo.'))
+    }, timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId))
+}
+
+const verifyEmailOtp = async ({ email, token }) => {
+  const { error } = await withTimeout(
+    supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'otp',
+    })
+  )
+
+  if (error) throw error
+}
 
 const RegisterScreen = () => {
   const navigate = useNavigate()
@@ -10,6 +39,8 @@ const RegisterScreen = () => {
   const [error, setError] = useState('')
   const [animating, setAnimating] = useState(false)
   const [direction, setDirection] = useState('forward')
+  const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''))
+  const otpRefs = useRef([])
 
   const [form, setForm] = useState({
     institutionName: '',
@@ -30,6 +61,11 @@ const RegisterScreen = () => {
   const validateStep1 = () => {
     if (!form.institutionName || !form.institutionCode || !form.country || !form.institutionEmail) {
       setError('Por favor completa todos los campos.')
+      return false
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(form.institutionEmail)) {
+      setError('Por favor ingresa un correo institucional válido.')
       return false
     }
     return true
@@ -60,50 +96,146 @@ const RegisterScreen = () => {
     }, 320)
   }
 
-  const handleNext = () => {
-    if (validateStep1()) {
-      setError('')
-      goToStep(2, 'forward')
-    }
-  }
+const handleNext = async () => {
+  if (!validateStep1()) return
 
-  const handleBack = () => {
-    setError('')
-    goToStep(1, 'backward')
-  }
-
-  const handleRegister = async () => {
-  if (!validateStep2()) return
   setLoading(true)
   setError('')
 
   try {
-    // 1. Crear usuario en Supabase Auth primero
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: form.directorEmail,
-      password: form.password,
-    })
-    if (authError) throw authError
+    const { error } = await withTimeout(
+      supabase.auth.signInWithOtp({
+        email: form.institutionEmail,
+        options: { shouldCreateUser: false, type: 'otp' },
+      })
+    )
 
-    // 2. Llamar la función que bypasea RLS
-    const { error: fnError } = await supabase.rpc('register_institution', {
-      p_institution_name: form.institutionName,
-      p_institution_code: form.institutionCode,
-      p_country: form.country,
-      p_institution_email: form.institutionEmail,
-      p_director_id: authData.user.id,
-      p_director_email: form.directorEmail,
-      p_director_name: form.directorName,
-    })
+    if (error) {
+      console.error(error)
+      setError(error.message)
+      return
+    }
+
+    goToStep(2, 'forward')
+
+  } catch (err) {
+    console.error(err)
+    setError(err.message)
+  } finally {
+    setLoading(false)
+  }
+}
+  // Reenviar OTP
+  const handleResendOtp = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const { error } = await withTimeout(
+        supabase.auth.signInWithOtp({
+          email: form.institutionEmail,
+          options: { shouldCreateUser: false, type: 'otp' },
+    }
+  }
+
+  // Verificar OTP ingresado
+  const handleVerifyOtp = async () => {
+    const code = otp.join('')
+    if (code.length < OTP_LENGTH) {
+      setError(`Ingresa el código completo de ${OTP_LENGTH} dígitos.`)
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      await verifyEmailOtp({
+        email: form.institutionEmail,
+        token: code,
+      })
+      goToStep(3, 'forward')
+    } catch (err) {
+      console.error('Verify OTP error:', err)
+      setError('Código incorrecto o expirado. Intenta de nuevo.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Manejar input de cada caja OTP
+  const handleOtpChange = (index, value) => {
+    if (!/^\d*$/.test(value)) return
+    const newOtp = [...otp]
+    newOtp[index] = value.slice(-1)
+    setOtp(newOtp)
+    setError('')
+    if (value && index < OTP_LENGTH - 1) {
+      otpRefs.current[index + 1]?.focus()
+    }
+  }
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus()
+    }
+    if (e.key === 'Enter') handleVerifyOtp()
+  }
+
+  const handleOtpPaste = (e) => {
+    e.preventDefault()
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_LENGTH)
+    const newOtp = [...otp]
+    pasted.split('').forEach((char, i) => { newOtp[i] = char })
+    setOtp(newOtp)
+    otpRefs.current[Math.min(pasted.length, OTP_LENGTH - 1)]?.focus()
+  }
+
+const { fetchProfile } = useAuth()  // ✅ importarlo
+
+const handleRegister = async () => {
+  if (!validateStep2()) return
+  setLoading(true)
+  setError('')
+  try {
+    const { data: authData, error: authError } = await withTimeout(
+      supabase.auth.signUp({
+        email: form.directorEmail,
+        password: form.password,
+      })
+    )
+    if (authError) throw authError
+    if (!authData.user?.id) {
+      throw new Error('No se pudo crear el usuario director.')
+    }
+
+    const { error: fnError } = await withTimeout(
+      supabase.rpc('register_institution', {
+        p_institution_name:  form.institutionName,
+        p_institution_code:  form.institutionCode,
+        p_country:           form.country,
+        p_institution_email: form.institutionEmail,
+        p_director_id:       authData.user.id,
+        p_director_email:    form.directorEmail,
+        p_director_name:     form.directorName,
+      })
+    )
     if (fnError) throw fnError
 
-    goToStep(3, 'forward')
+    // ✅ Ahora sí existe el perfil, cargarlo
+    await fetchProfile(authData.user.id)
+
+    goToStep(4, 'forward')
   } catch (err) {
     setError(err.message || 'Ocurrió un error. Intenta de nuevo.')
   } finally {
     setLoading(false)
   }
 }
+
+  const handleBack = () => {
+    setError('')
+    setOtp(Array(OTP_LENGTH).fill(''))
+    goToStep(step - 1, 'backward')
+  }
+
   const getAnimationStyle = () => {
     if (!animating) return {
       opacity: 1,
@@ -117,6 +249,9 @@ const RegisterScreen = () => {
     }
   }
 
+  // Steps: 1=Institución, 2=Verificación OTP, 3=Director, 4=Éxito
+  const stepLabels = ['Institución', 'Verificación', 'Director']
+
   return (
     <div style={styles.page}>
       <style>{`
@@ -124,9 +259,11 @@ const RegisterScreen = () => {
           from { opacity: 0; transform: translateY(16px); }
           to   { opacity: 1; transform: translateY(0); }
         }
-        .form-field {
-          animation: fadeSlideIn 0.3s ease forwards;
-        }
+        .form-field { animation: fadeSlideIn 0.3s ease forwards; }
+        .otp-input:focus { border-color: #6C63FF !important; background: #F0EEFF !important; }
+        .otp-input { transition: border-color 0.2s, background 0.2s; }
+        .resend-btn:hover { color: #6C63FF !important; }
+        .back-btn:hover { border-color: #6C63FF !important; color: #6C63FF !important; }
       `}</style>
 
       <div style={styles.card}>
@@ -140,50 +277,50 @@ const RegisterScreen = () => {
           <p style={styles.subtitle}>Registro de institución</p>
         </div>
 
-        {/* Steps indicator */}
-        {step !== 3 && (
+        {/* Steps indicator - solo pasos 1, 2, 3 */}
+        {step !== 4 && (
           <div style={styles.stepsWrapper}>
-            <div style={styles.stepItem}>
-              <div style={{
-                ...styles.stepCircle,
-                background: step >= 1 ? 'linear-gradient(135deg, #6C63FF, #4FACFE)' : '#E2E8F0',
-              }}>
-                {step > 1
-                  ? <Check size={14} color="#fff" />
-                  : <span style={styles.stepNumber}>1</span>
-                }
-              </div>
-              <span style={{ ...styles.stepLabel, color: step >= 1 ? '#6C63FF' : '#94A3B8' }}>
-                Institución
-              </span>
-            </div>
-
-            <div style={styles.stepLineWrapper}>
-              <div style={styles.stepLineBase} />
-              <div style={{
-                ...styles.stepLineFill,
-                width: step >= 2 ? '100%' : '0%',
-              }} />
-            </div>
-
-            <div style={styles.stepItem}>
-              <div style={{
-                ...styles.stepCircle,
-                background: step >= 2 ? 'linear-gradient(135deg, #6C63FF, #4FACFE)' : '#E2E8F0',
-              }}>
-                <span style={styles.stepNumber}>2</span>
-              </div>
-              <span style={{ ...styles.stepLabel, color: step >= 2 ? '#6C63FF' : '#94A3B8' }}>
-                Director
-              </span>
-            </div>
+            {stepLabels.map((label, i) => {
+              const stepNum = i + 1
+              const isCompleted = step > stepNum
+              const isActive = step === stepNum
+              return (
+                <div key={label} style={{ display: 'flex', alignItems: 'center' }}>
+                  <div style={styles.stepItem}>
+                    <div style={{
+                      ...styles.stepCircle,
+                      background: isCompleted || isActive
+                        ? 'linear-gradient(135deg, #6C63FF, #4FACFE)'
+                        : '#E2E8F0',
+                    }}>
+                      {isCompleted
+                        ? <Check size={14} color="#fff" />
+                        : <span style={styles.stepNumber}>{stepNum}</span>
+                      }
+                    </div>
+                    <span style={{ ...styles.stepLabel, color: isActive || isCompleted ? '#6C63FF' : '#94A3B8' }}>
+                      {label}
+                    </span>
+                  </div>
+                  {i < stepLabels.length - 1 && (
+                    <div style={styles.stepLineWrapper}>
+                      <div style={styles.stepLineBase} />
+                      <div style={{
+                        ...styles.stepLineFill,
+                        width: step > stepNum ? '100%' : '0%',
+                      }} />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 
         {/* Contenido animado */}
         <div style={getAnimationStyle()}>
 
-          {/* Step 1 */}
+          {/* Step 1: Institución */}
           {step === 1 && (
             <div style={styles.form}>
               {[
@@ -205,14 +342,82 @@ const RegisterScreen = () => {
 
               {error && <div style={styles.errorBox}>{error}</div>}
 
-              <button onClick={handleNext} style={styles.submitButton}>
-                Siguiente <ArrowRight size={16} style={{ marginLeft: '6px' }} />
+              <button
+                onClick={handleNext}
+                disabled={loading}
+                style={{ ...styles.submitButton, opacity: loading ? 0.7 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}
+              >
+                {loading ? 'Enviando código...' : <><span>Siguiente</span> <ArrowRight size={16} style={{ marginLeft: '6px' }} /></>}
               </button>
             </div>
           )}
 
-          {/* Step 2 */}
+          {/* Step 2: Verificación OTP */}
           {step === 2 && (
+            <div style={styles.form}>
+              <div style={styles.otpInfo}>
+                <div style={styles.otpIconWrapper}>
+                  <Mail size={22} color="#6C63FF" />
+                </div>
+                <p style={styles.otpInfoTitle}>Revisa tu correo</p>
+                <p style={styles.otpInfoText}>
+                  Enviamos un código de {OTP_LENGTH} dígitos a{' '}
+                  <strong style={{ color: '#1E293B' }}>{form.institutionEmail}</strong>
+                </p>
+              </div>
+
+              {/* Cajas OTP */}
+              <div style={styles.otpWrapper} onPaste={handleOtpPaste}>
+                {otp.map((digit, index) => (
+                  <input
+                    key={index}
+                    ref={el => otpRefs.current[index] = el}
+                    className="otp-input"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={e => handleOtpChange(index, e.target.value)}
+                    onKeyDown={e => handleOtpKeyDown(index, e)}
+                    style={{
+                      ...styles.otpBox,
+                      borderColor: digit ? '#6C63FF' : '#E2E8F0',
+                      background: digit ? '#F0EEFF' : '#F8FAFC',
+                      color: digit ? '#6C63FF' : '#1E293B',
+                    }}
+                    autoFocus={index === 0}
+                  />
+                ))}
+              </div>
+
+              {error && <div style={styles.errorBox}>{error}</div>}
+
+              <button
+                onClick={handleVerifyOtp}
+                disabled={loading}
+                style={{ ...styles.submitButton, opacity: loading ? 0.7 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}
+              >
+                {loading ? 'Verificando...' : <><Check size={16} style={{ marginRight: '6px' }} /><span>Verificar código</span></>}
+              </button>
+
+              <div style={styles.buttonRow}>
+                <button onClick={handleBack} className="back-btn" style={styles.backButton}>
+                  <ArrowLeft size={16} style={{ marginRight: '6px' }} /> Atrás
+                </button>
+                <button
+                  onClick={handleResendOtp}
+                  disabled={loading}
+                  className="resend-btn"
+                  style={styles.resendButton}
+                >
+                  Reenviar código
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Director */}
+          {step === 3 && (
             <div style={styles.form}>
               {[
                 { label: 'Nombre completo del director', field: 'directorName', placeholder: 'Ej: María González', delay: '0ms' },
@@ -234,7 +439,7 @@ const RegisterScreen = () => {
               {error && <div style={styles.errorBox}>{error}</div>}
 
               <div style={styles.buttonRow}>
-                <button onClick={handleBack} style={styles.backButton}>
+                <button onClick={handleBack} className="back-btn" style={styles.backButton}>
                   <ArrowLeft size={16} style={{ marginRight: '6px' }} /> Atrás
                 </button>
                 <button
@@ -253,8 +458,8 @@ const RegisterScreen = () => {
             </div>
           )}
 
-          {/* Step 3: Éxito */}
-          {step === 3 && (
+          {/* Step 4: Éxito */}
+          {step === 4 && (
             <div style={styles.successWrapper}>
               <div style={styles.successIcon}>
                 <Check size={36} color="#fff" />
@@ -263,10 +468,7 @@ const RegisterScreen = () => {
               <p style={styles.successText}>
                 Tu institución ha sido creada exitosamente. Ya puedes iniciar sesión con tu cuenta de director.
               </p>
-              <button
-                onClick={() => navigate('/login')}
-                style={styles.submitButton}
-              >
+              <button onClick={() => navigate('/login')} style={styles.submitButton}>
                 Ir al inicio de sesión
               </button>
             </div>
@@ -275,7 +477,7 @@ const RegisterScreen = () => {
         </div>
 
         {/* Link al login */}
-        {step !== 3 && (
+        {step !== 4 && (
           <div style={styles.loginWrapper}>
             <span style={styles.loginText}>¿Ya tienes cuenta? </span>
             <button onClick={() => navigate('/login')} style={styles.loginLink}>
@@ -389,7 +591,7 @@ const styles = {
   },
   stepLineWrapper: {
     position: 'relative',
-    width: '60px',
+    width: '40px',
     height: '2px',
     marginInline: '8px',
     marginBottom: '22px',
@@ -482,8 +684,67 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    transition: 'border-color 0.2s',
+    transition: 'border-color 0.2s, color 0.2s',
   },
+  resendButton: {
+    flex: 1,
+    padding: '13px',
+    borderRadius: '12px',
+    border: '1.5px solid #E2E8F0',
+    background: '#fff',
+    color: '#94A3B8',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'color 0.2s',
+  },
+  // OTP
+  otpInfo: {
+    textAlign: 'center',
+    padding: '16px',
+    backgroundColor: '#F8FAFF',
+    borderRadius: '16px',
+    border: '1.5px solid #E8E4FF',
+  },
+  otpIconWrapper: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '12px',
+    backgroundColor: '#EDE9FF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    margin: '0 auto 10px',
+  },
+  otpInfoTitle: {
+    fontSize: '15px',
+    fontWeight: '700',
+    color: '#1E293B',
+    margin: '0 0 6px',
+  },
+  otpInfoText: {
+    fontSize: '13px',
+    color: '#64748B',
+    margin: 0,
+    lineHeight: '1.5',
+  },
+  otpWrapper: {
+    display: 'flex',
+    gap: '8px',
+    justifyContent: 'center',
+  },
+  otpBox: {
+    width: '40px',
+    height: '52px',
+    borderRadius: '12px',
+    border: '2px solid #E2E8F0',
+    fontSize: '22px',
+    fontWeight: '700',
+    textAlign: 'center',
+    outline: 'none',
+    cursor: 'text',
+  },
+  // Success
   successWrapper: {
     textAlign: 'center',
     padding: '8px 0',

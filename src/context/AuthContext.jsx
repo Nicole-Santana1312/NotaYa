@@ -2,31 +2,63 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 const AuthContext = createContext({})
+const PROFILE_TIMEOUT_MS = 10000
+
+const withTimeout = (promise, timeoutMs = PROFILE_TIMEOUT_MS) => {
+  let timeoutId
+
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error('La consulta del perfil tardo demasiado.'))
+    }, timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId))
+}
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [profileLoading, setProfileLoading] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setUser(session.user)
-        fetchProfile(session.user.id)
-      } else {
+    const init = async () => {
+      console.log('🚀 init started')
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        console.log('📦 session:', session)
+
+        if (session?.user) {
+          setUser(session.user)
+          console.log('👤 user found, fetching profile...')
+          await fetchProfile(session.user.id)
+        } else {
+          console.log('❌ no session')
+        }
+
+      } catch (err) {
+        console.error('Error init:', err.message)
+      } finally {
+        console.log('✅ loading done')
         setLoading(false)
       }
-    })
+    }
+
+    init()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        if (session) {
+        console.log('🔄 onAuthStateChange:', _event, session?.user?.id)
+        if (session?.user) {
           setUser(session.user)
-          fetchProfile(session.user.id)
+          setTimeout(() => {
+            fetchProfile(session.user.id)
+          }, 0)
         } else {
           setUser(null)
           setProfile(null)
-          setLoading(false)
+          setProfileLoading(false)
         }
       }
     )
@@ -35,19 +67,37 @@ export const AuthProvider = ({ children }) => {
   }, [])
 
   const fetchProfile = async (userId) => {
+    console.log('🔍 fetchProfile called for:', userId)
+    setProfileLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single()
+      const { data, error } = await withTimeout(
+        supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle()
+      )
 
-      if (error) throw error
+      console.log('📋 fetchProfile result:', { data, error })
+
+      if (error) {
+        console.error('Error profile:', error.message)
+        return
+      }
+
+      if (!data) {
+        console.log('⚠️ no profile found for user:', userId)
+        return
+      }
+
+      console.log('✅ profile loaded:', data)
       setProfile(data)
-    } catch (error) {
-      console.error('Error fetching profile:', error.message)
+
+    } catch (err) {
+      console.error('Error inesperado:', err.message)
     } finally {
-      setLoading(false)
+      console.log('🏁 profileLoading done')
+      setProfileLoading(false)
     }
   }
 
@@ -69,8 +119,10 @@ export const AuthProvider = ({ children }) => {
       user,
       profile,
       loading,
+      profileLoading,
       signIn,
       signOut,
+      fetchProfile,
     }}>
       {children}
     </AuthContext.Provider>

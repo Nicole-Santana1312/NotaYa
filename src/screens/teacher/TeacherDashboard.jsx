@@ -23,7 +23,6 @@ const TeacherDashboard = () => {
   const [activeView, setActiveView] = useState('overview')
 
   const [showSubjectModal, setShowSubjectModal] = useState(false)
-  const [showClassroomModal, setShowClassroomModal] = useState(false)
   const [success, setSuccess] = useState('')
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState('')
@@ -227,7 +226,6 @@ const TeacherDashboard = () => {
       }
 
       showSuccessMsg('Aula creada exitosamente.')
-      setShowClassroomModal(false)
       setClassroomForm({ subjectId: '', sectionId: '', newSectionName: '', periodId: '', useNewSection: false })
       fetchData()
     } catch (err) {
@@ -352,13 +350,6 @@ const TeacherDashboard = () => {
                 Nueva materia
               </button>
             )}
-            <button
-              onClick={() => { setShowClassroomModal(true); setFormError('') }}
-              style={styles.primaryButton}
-            >
-              <Plus size={16} style={{ marginRight: '6px' }} />
-              Nuevo aula
-            </button>
           </div>
         </div>
 
@@ -449,7 +440,7 @@ const TeacherDashboard = () => {
               <div style={styles.emptyState}>
                 <Layers size={36} color="#CBD5E1" />
                 <p style={styles.emptyText}>No tienes aulas creadas aún.</p>
-                <p style={styles.emptySubtext}>Crea una con el botón de arriba.</p>
+                <p style={styles.emptySubtext}>Las aulas son creadas por el administrador.</p>
               </div>
             ) : (
               <div style={styles.classroomGrid}>
@@ -479,13 +470,6 @@ const TeacherDashboard = () => {
                         {classroom.teacher_subjects?.subjects?.type === 'workshop' ? '🔧 Taller' : '📚 Académica'}
                       </span>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <button
-                          onClick={() => handleDeleteClassroom(classroom.id)}
-                          style={styles.deleteClassroomBtn}
-                          title="Eliminar aula"
-                        >
-                          <Trash2 size={14} />
-                        </button>
                         <button
                           onClick={() => navigate(`/teacher/classroom/${classroom.id}`)}
                           style={styles.classroomBtn}
@@ -536,123 +520,6 @@ const TeacherDashboard = () => {
                 style={{ ...styles.primaryButton, opacity: formLoading ? 0.7 : 1 }}
               >
                 {formLoading ? 'Agregando...' : 'Agregar materia'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Crear aula */}
-      {showClassroomModal && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modal}>
-            <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>Crear aula</h2>
-              <button onClick={() => setShowClassroomModal(false)} style={styles.closeBtn}>
-                <X size={20} />
-              </button>
-            </div>
-            <div style={styles.modalBody}>
-              <div style={styles.fieldGroup}>
-                <label style={styles.label}>Materia</label>
-                {subjects.length === 0 ? (
-                  <p style={styles.warningText}>
-                    {isWorkshop ? 'Primero agrega una materia de taller.' : 'Aún no tienes materia asignada.'}
-                  </p>
-                ) : (
-                  <select
-                    style={styles.input}
-                    value={classroomForm.subjectId}
-                    onChange={e => setClassroomForm(p => ({ ...p, subjectId: e.target.value }))}
-                  >
-                    <option value="">Selecciona una materia</option>
-                    {subjects.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div style={styles.fieldGroup}>
-                <label style={styles.label}>Período</label>
-                <select
-                  style={styles.input}
-                  value={classroomForm.periodId}
-                  onChange={e => setClassroomForm(p => ({ ...p, periodId: e.target.value }))}
-                >
-                  <option value="">Selecciona un período</option>
-                  {periods.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={styles.fieldGroup}>
-                <label style={styles.label}>Sección</label>
-                <div style={styles.toggleRow}>
-                  <button
-                    onClick={() => setClassroomForm(p => ({ ...p, useNewSection: false }))}
-                    style={{
-                      ...styles.toggleBtn,
-                      background: !classroomForm.useNewSection ? 'linear-gradient(135deg, #6C63FF, #4FACFE)' : '#F8FAFC',
-                      color: !classroomForm.useNewSection ? '#fff' : '#64748B',
-                      border: !classroomForm.useNewSection ? 'none' : '1.5px solid #E2E8F0',
-                    }}
-                  >
-                    Existente
-                  </button>
-                  <button
-                    onClick={() => setClassroomForm(p => ({ ...p, useNewSection: true }))}
-                    style={{
-                      ...styles.toggleBtn,
-                      background: classroomForm.useNewSection ? 'linear-gradient(135deg, #6C63FF, #4FACFE)' : '#F8FAFC',
-                      color: classroomForm.useNewSection ? '#fff' : '#64748B',
-                      border: classroomForm.useNewSection ? 'none' : '1.5px solid #E2E8F0',
-                    }}
-                  >
-                    Crear nueva
-                  </button>
-                </div>
-
-                {!classroomForm.useNewSection ? (
-                  sections.length === 0 ? (
-                    <p style={{ ...styles.warningText, marginTop: '8px' }}>
-                      No hay secciones aún. Selecciona "Crear nueva".
-                    </p>
-                  ) : (
-                    <select
-                      style={{ ...styles.input, marginTop: '8px' }}
-                      value={classroomForm.sectionId}
-                      onChange={e => setClassroomForm(p => ({ ...p, sectionId: e.target.value }))}
-                    >
-                      <option value="">Selecciona una sección</option>
-                      {sections.map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                  )
-                ) : (
-                  <input
-                    style={{ ...styles.input, marginTop: '8px' }}
-                    placeholder="Ej: 5to A"
-                    value={classroomForm.newSectionName}
-                    onChange={e => setClassroomForm(p => ({ ...p, newSectionName: e.target.value }))}
-                    onFocus={e => e.target.style.borderColor = '#6C63FF'}
-                    onBlur={e => e.target.style.borderColor = '#E2E8F0'}
-                  />
-                )}
-              </div>
-
-              {formError && <div style={styles.errorBox}>{formError}</div>}
-            </div>
-            <div style={styles.modalFooter}>
-              <button onClick={() => setShowClassroomModal(false)} style={styles.cancelBtn}>Cancelar</button>
-              <button
-                onClick={handleCreateClassroom}
-                disabled={formLoading || subjects.length === 0}
-                style={{ ...styles.primaryButton, opacity: (formLoading || subjects.length === 0) ? 0.7 : 1 }}
-              >
-                {formLoading ? 'Creando...' : 'Crear aula'}
               </button>
             </div>
           </div>

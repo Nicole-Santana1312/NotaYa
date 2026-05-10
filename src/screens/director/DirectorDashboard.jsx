@@ -12,6 +12,7 @@ const DirectorDashboard = () => {
   const { profile, signOut } = useAuth()
   const [stats, setStats] = useState({ coordinators: 0, teachers: 0, students: 0 })
   const [coordinators, setCoordinators] = useState([])
+  const [sections, setSections] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -49,13 +50,21 @@ const DirectorDashboard = () => {
         .in('role', ['coordinator_academic', 'coordinator_workshop'])
         .order('created_at', { ascending: false })
 
+      const { data: sectionData } = await supabase
+        .from('sections')
+        .select('*')
+        .eq('institution_id', profile.institution_id)
+        .order('name')
+
       setCoordinators(coords || [])
+      setSections(sectionData || [])
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
   }
+
 
   const handleCreateCoordinator = async () => {
     if (!form.fullName || !form.email || !form.password) {
@@ -499,6 +508,7 @@ const styles = {
   pageTitle: { fontSize: '24px', fontWeight: '700', color: '#1E293B', margin: '0 0 4px' },
   pageSubtitle: { fontSize: '14px', color: '#94A3B8', margin: 0 },
   primaryButton: { display: 'flex', alignItems: 'center', padding: '10px 18px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #6C63FF, #4FACFE)', color: '#fff', fontSize: '14px', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 12px rgba(108, 99, 255, 0.3)' },
+  secondaryButton: { display: 'flex', alignItems: 'center', padding: '8px 12px', borderRadius: '10px', border: '1.5px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
   statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '32px' },
   statCard: { backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #F1F5F9' },
   statIcon: { width: '44px', height: '44px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
@@ -506,7 +516,12 @@ const styles = {
   statLabel: { fontSize: '13px', color: '#94A3B8', margin: 0 },
   successBox: { display: 'flex', alignItems: 'center', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', color: '#10B981', padding: '12px 16px', borderRadius: '12px', fontSize: '14px', marginBottom: '20px' },
   section: { backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #F1F5F9' },
+  sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' },
   sectionTitle: { fontSize: '16px', fontWeight: '600', color: '#1E293B', margin: '0 0 20px' },
+  content: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' },
+  card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '16px', border: '1px solid #E2E8F0' },
+  cardTitle: { fontSize: '16px', fontWeight: '700', color: '#1E293B', margin: '0 0 6px' },
+  cardText: { fontSize: '13px', color: '#64748B', margin: 0 },
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px', gap: '8px' },
   emptyText: { fontSize: '14px', color: '#94A3B8', margin: 0 },
   emptySubtext: { fontSize: '13px', color: '#CBD5E1', margin: 0 },
@@ -529,8 +544,17 @@ const styles = {
   modalBody: { padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' },
   modalFooter: { display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '16px 24px', borderTop: '1px solid #F1F5F9' },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  twoCol: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
   label: { fontSize: '12px', fontWeight: '600', color: '#475569' },
   input: { padding: '11px 14px', borderRadius: '12px', border: '1.5px solid #E2E8F0', fontSize: '14px', color: '#1E293B', outline: 'none', transition: 'border-color 0.2s', width: '100%', boxSizing: 'border-box', backgroundColor: '#F8FAFC' },
+  assignmentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px', maxHeight: '180px', overflowY: 'auto' },
+  assignmentOption: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', padding: '12px', borderRadius: '12px', border: '1.5px solid #E2E8F0', cursor: 'pointer', textAlign: 'left' },
+  assignmentTitle: { fontSize: '13px', fontWeight: '700', color: '#1E293B' },
+  assignmentMeta: { fontSize: '12px', color: '#64748B' },
+  studentRows: { display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' },
+  studentBundleRow: { display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 70px 1fr 1fr 1.2fr 34px', gap: '8px', alignItems: 'center' },
+  studentInput: { padding: '9px 10px', borderRadius: '10px', border: '1.5px solid #E2E8F0', fontSize: '13px', color: '#1E293B', outline: 'none', backgroundColor: '#F8FAFC', minWidth: 0 },
+  smallInput: { padding: '9px 8px', borderRadius: '10px', border: '1.5px solid #E2E8F0', fontSize: '13px', color: '#1E293B', outline: 'none', backgroundColor: '#F8FAFC', minWidth: 0 },
   passwordWrapper: { position: 'relative' },
   eyeButton: { position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' },
   roleSelector: { display: 'flex', gap: '10px' },

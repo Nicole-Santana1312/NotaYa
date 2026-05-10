@@ -8,6 +8,24 @@ import {
   Printer, FileText, ChevronDown, UserCircle
 } from 'lucide-react'
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+const apiJson = async (path, options) => {
+  const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`
+  const res = await fetch(url, options)
+  const text = await res.text()
+  let data = {}
+
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    throw new Error('El servidor del API no respondio JSON. Verifica que npm run server este corriendo y reinicia Vite si acabas de cambiar rutas.')
+  }
+
+  if (!res.ok) throw new Error(data.error || 'No se pudo completar la accion.')
+  return data
+}
+
 const CoordinatorDashboard = () => {
   const { profile, signOut } = useAuth()
   const isAcademic = profile?.role === 'coordinator_academic'
@@ -30,6 +48,9 @@ const CoordinatorDashboard = () => {
   const [showDeleteTeacherModal, setShowDeleteTeacherModal] = useState(false)
   const [showEditSubjectModal, setShowEditSubjectModal] = useState(false)
   const [showDeleteSubjectModal, setShowDeleteSubjectModal] = useState(false)
+  const [showSectionModal, setShowSectionModal] = useState(false)
+  const [showEditSectionModal, setShowEditSectionModal] = useState(false)
+  const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false)
 
   // Modal detalle profesor
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -40,6 +61,8 @@ const CoordinatorDashboard = () => {
   // ── REPORTE DE NOTAS ────────────────────────────────────
   const [showReportModal, setShowReportModal] = useState(false)
   const [sections, setSections] = useState([])
+  const [periods, setPeriods] = useState([])
+  const [teacherSubjects, setTeacherSubjects] = useState([])
   const [reportSection, setReportSection] = useState('')
   const [reportPeriod, setReportPeriod] = useState('')
   const [reportData, setReportData] = useState(null)
@@ -48,10 +71,12 @@ const CoordinatorDashboard = () => {
 
   const [selectedTeacher, setSelectedTeacher] = useState(null)
   const [selectedSubject, setSelectedSubject] = useState(null)
+  const [selectedSection, setSelectedSection] = useState(null)
 
   const [teacherForm, setTeacherForm] = useState({ fullName: '', email: '', password: '', subjectId: '' })
   const [editTeacherForm, setEditTeacherForm] = useState({ fullName: '', email: '', password: '', subjectId: '' })
   const [subjectForm, setSubjectForm] = useState({ name: '' })
+  const [editSubjectForm, setEditSubjectForm] = useState({ name: '', teacherId: '' })
   const [competencies, setCompetencies] = useState([])
   const [showCompetencyModal, setShowCompetencyModal] = useState(false)
   const [showEditCompetencyModal, setShowEditCompetencyModal] = useState(false)
@@ -59,6 +84,9 @@ const CoordinatorDashboard = () => {
   const [competencyForm, setCompetencyForm] = useState({ name: '', description: '', type: 'general', subject_id: '' })
   const [editCompetencyForm, setEditCompetencyForm] = useState({ name: '', description: '', type: 'general', subject_id: '' })
   const [selectedCompetency, setSelectedCompetency] = useState(null)
+  const emptyStudentRow = { full_name: '', email: '', age: '', gender: '', phone: '', birth_date: '', password: '', tutor_name: '', tutor_email: '', tutor_password: '' }
+  const [sectionForm, setSectionForm] = useState({ name: '', level: '', period_id: '', teacher_subject_ids: [], students: [{ ...emptyStudentRow }] })
+  const [editSectionForm, setEditSectionForm] = useState({ name: '', level: '', period_id: '', teacher_subject_ids: [], students: [] })
 
   useEffect(() => { fetchData() }, [])
 
@@ -91,9 +119,27 @@ const CoordinatorDashboard = () => {
         .eq('institution_id', profile.institution_id)
         .order('name', { ascending: true })
 
+      const { data: periodData } = await supabase
+        .from('academic_periods')
+        .select('*')
+        .eq('institution_id', profile.institution_id)
+        .order('start_date', { ascending: false })
+
+      const { data: tsData, error: tsError } = await supabase
+        .from('teacher_subjects')
+        .select(`
+          id,
+          teacher_id,
+          users!teacher_subjects_teacher_id_fkey(full_name),
+          subjects(id, name, type)
+        `)
+      if (tsError) throw tsError
+
       setTeachers(teacherData || [])
       setSubjects(subjectData || [])
       setSections(sectionData || [])
+      setPeriods(periodData || [])
+      setTeacherSubjects((tsData || []).filter(item => item.subjects?.type === (isAcademic ? 'academic' : 'workshop')))
       setCompetencies(competencyData || [])
       setStats({ teachers: teacherData?.length || 0, subjects: subjectData?.length || 0 })
     } catch (err) {
@@ -106,6 +152,176 @@ const CoordinatorDashboard = () => {
   const showSuccess = (msg) => {
     setSuccess(msg)
     setTimeout(() => setSuccess(''), 3000)
+  }
+
+  const updateStudentRow = (index, field, value) => {
+    setSectionForm(prev => ({
+      ...prev,
+      students: prev.students.map((student, i) => i === index ? { ...student, [field]: value } : student),
+    }))
+    setFormError('')
+  }
+
+  const addStudentRow = () => {
+    setSectionForm(prev => ({ ...prev, students: [...prev.students, { ...emptyStudentRow }] }))
+  }
+
+  const removeStudentRow = (index) => {
+    setSectionForm(prev => ({ ...prev, students: prev.students.filter((_, i) => i !== index) }))
+  }
+
+  const toggleTeacherSubject = (id) => {
+    setSectionForm(prev => ({
+      ...prev,
+      teacher_subject_ids: prev.teacher_subject_ids.includes(id)
+        ? prev.teacher_subject_ids.filter(tsId => tsId !== id)
+        : [...prev.teacher_subject_ids, id],
+    }))
+    setFormError('')
+  }
+
+  const handleCreateSectionBundle = async () => {
+    const validStudents = sectionForm.students.filter(student => student.full_name.trim() && student.email.trim())
+    if (!sectionForm.name.trim() || !sectionForm.period_id) {
+      setFormError('Completa seccion y periodo.')
+      return
+    }
+    if (validStudents.length === 0) {
+      setFormError('Agrega al menos un estudiante con nombre y correo.')
+      return
+    }
+
+    setFormLoading(true)
+    setFormError('')
+    try {
+      const data = await apiJson('/api/admin/create-section-bundle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          institution_id: profile.institution_id,
+          created_by: profile.id,
+          section: { name: sectionForm.name, level: sectionForm.level },
+          period_id: sectionForm.period_id,
+          teacher_subject_ids: sectionForm.teacher_subject_ids,
+          students: validStudents,
+        }),
+      })
+      showSuccess(`Seccion creada con ${data.students} estudiante(s) y ${data.classroomIds.length} aula(s).`)
+      setShowSectionModal(false)
+      setSectionForm({ name: '', level: '', period_id: '', teacher_subject_ids: [], students: [{ ...emptyStudentRow }] })
+      fetchData()
+    } catch (err) {
+      setFormError(err.message || 'Ocurrio un error.')
+    } finally {
+      setFormLoading(false)
+    }
+  }
+
+  const updateEditStudentRow = (index, field, value) => {
+    setEditSectionForm(prev => ({
+      ...prev,
+      students: prev.students.map((student, i) => i === index ? { ...student, [field]: value } : student),
+    }))
+    setFormError('')
+  }
+
+  const addEditStudentRow = () => {
+    setEditSectionForm(prev => ({ ...prev, students: [...prev.students, { ...emptyStudentRow }] }))
+  }
+
+  const removeEditStudentRow = (index) => {
+    setEditSectionForm(prev => ({ ...prev, students: prev.students.filter((_, i) => i !== index) }))
+  }
+
+  const toggleEditTeacherSubject = (id) => {
+    setEditSectionForm(prev => ({
+      ...prev,
+      teacher_subject_ids: prev.teacher_subject_ids.includes(id)
+        ? prev.teacher_subject_ids.filter(tsId => tsId !== id)
+        : [...prev.teacher_subject_ids, id],
+    }))
+    setFormError('')
+  }
+
+  const openEditSection = async (section) => {
+    setSelectedSection(section)
+    setEditSectionForm({ name: section.name || '', level: section.level || '', period_id: '', teacher_subject_ids: [], students: [] })
+    setFormError('')
+    setFormLoading(true)
+    try {
+      const data = await apiJson(`/api/admin/sections/${section.id}/bundle?institution_id=${profile.institution_id}`)
+      setEditSectionForm({
+        name: data.section?.name || '',
+        level: data.section?.level || '',
+        period_id: data.period_id || '',
+        teacher_subject_ids: data.teacher_subject_ids || [],
+        students: data.students?.length ? data.students : [{ ...emptyStudentRow }],
+      })
+      setShowEditSectionModal(true)
+    } catch (err) {
+      setFormError(err.message || 'Ocurrio un error.')
+    } finally {
+      setFormLoading(false)
+    }
+  }
+
+  const handleEditSection = async () => {
+    const validStudents = editSectionForm.students.filter(student => student.full_name.trim() && student.email.trim())
+    if (!editSectionForm.name.trim() || !editSectionForm.period_id) {
+      setFormError('Completa seccion y periodo.')
+      return
+    }
+
+    setFormLoading(true)
+    setFormError('')
+    try {
+      await apiJson(`/api/admin/sections/${selectedSection.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          institution_id: profile.institution_id,
+          created_by: profile.id,
+          section: { name: editSectionForm.name, level: editSectionForm.level },
+          period_id: editSectionForm.period_id,
+          teacher_subject_ids: editSectionForm.teacher_subject_ids,
+          students: validStudents,
+        }),
+      })
+      showSuccess('Seccion actualizada.')
+      setShowEditSectionModal(false)
+      setSelectedSection(null)
+      fetchData()
+    } catch (err) {
+      setFormError(err.message || 'Ocurrio un error.')
+    } finally {
+      setFormLoading(false)
+    }
+  }
+
+  const openDeleteSection = (section) => {
+    setSelectedSection(section)
+    setFormError('')
+    setShowDeleteSectionModal(true)
+  }
+
+  const handleDeleteSection = async () => {
+    setFormLoading(true)
+    setFormError('')
+    try {
+      await apiJson(`/api/admin/sections/${selectedSection.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ institution_id: profile.institution_id }),
+      })
+      showSuccess('Seccion eliminada.')
+      setShowDeleteSectionModal(false)
+      setSelectedSection(null)
+      fetchData()
+    } catch (err) {
+      setFormError(err.message || 'Ocurrio un error.')
+    } finally {
+      setFormLoading(false)
+    }
   }
 
   // ── REPORTE DE NOTAS ────────────────────────────────────
@@ -614,8 +830,9 @@ const CoordinatorDashboard = () => {
   }
 
   const openEditSubject = (subject) => {
+    const currentAssignment = teacherSubjects.find(item => item.subjects?.id === subject.id)
     setSelectedSubject(subject)
-    setEditSubjectForm({ name: subject.name })
+    setEditSubjectForm({ name: subject.name, teacherId: currentAssignment?.teacher_id || '' })
     setFormError('')
     setShowEditSubjectModal(true)
   }
@@ -633,6 +850,18 @@ const CoordinatorDashboard = () => {
         .update({ name: editSubjectForm.name })
         .eq('id', selectedSubject.id)
       if (error) throw error
+
+      await supabase.from('teacher_subjects').delete().eq('subject_id', selectedSubject.id)
+
+      if (editSubjectForm.teacherId) {
+        const { error: assignError } = await supabase.from('teacher_subjects').insert({
+          teacher_id: editSubjectForm.teacherId,
+          subject_id: selectedSubject.id,
+          assigned_by: profile.id,
+        })
+        if (assignError) throw assignError
+      }
+
       showSuccess('Materia actualizada.')
       setShowEditSubjectModal(false)
       fetchData()
@@ -763,6 +992,12 @@ const CoordinatorDashboard = () => {
             <BookOpen size={18} /><span>Materias</span>
           </div>
           <div
+            style={{ ...styles.navItem, ...(activeView === 'sections' ? styles.navItemActive : {}) }}
+            onClick={() => setActiveView('sections')}
+          >
+            <Users size={18} /><span>Secciones</span>
+          </div>
+          <div
             style={{ ...styles.navItem, ...(activeView === 'competencies' ? styles.navItemActive : {}) }}
             onClick={() => setActiveView('competencies')}
           >
@@ -847,7 +1082,7 @@ const CoordinatorDashboard = () => {
                   <div style={styles.cardHeader}>
                     <h3 style={styles.cardTitle}>{subject.name}</h3>
                     <div style={styles.cardActions}>
-                      <button onClick={() => { setSelectedSubject(subject); setEditSubjectForm({ name: subject.name }); setShowEditSubjectModal(true) }} style={styles.iconButton}>
+                      <button onClick={() => openEditSubject(subject)} style={styles.iconButton}>
                         <Pencil size={16} />
                       </button>
                       <button onClick={() => { setSelectedSubject(subject); setShowDeleteSubjectModal(true) }} style={styles.iconButton}>
@@ -856,6 +1091,40 @@ const CoordinatorDashboard = () => {
                     </div>
                   </div>
                   <p style={styles.cardText}>Tipo: {subject.type}</p>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : activeView === 'sections' ? (
+          <>
+            <div style={styles.topBar}>
+              <div>
+                <h1 style={styles.pageTitle}>Secciones y estudiantes</h1>
+                <p style={styles.pageSubtitle}>Crea secciones, estudiantes, tutores y asigna materias a profesores.</p>
+              </div>
+              <button onClick={() => { setShowSectionModal(true); setFormError('') }} style={styles.primaryButton}>
+                <Plus size={16} style={{ marginRight: '6px' }} />Nueva seccion
+              </button>
+            </div>
+            <div style={styles.content}>
+              {sections.length === 0 ? (
+                <div style={styles.card}>
+                  <p style={styles.emptyText}>No hay secciones aun.</p>
+                </div>
+              ) : sections.map(section => (
+                <div key={section.id} style={styles.card}>
+                  <div style={styles.cardHeader}>
+                    <h3 style={styles.cardTitle}>{section.name}</h3>
+                    <div style={styles.cardActions}>
+                      <button onClick={() => openEditSection(section)} style={styles.iconButton}>
+                        <Pencil size={16} />
+                      </button>
+                      <button onClick={() => openDeleteSection(section)} style={styles.iconButton}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                  <p style={styles.cardText}>{section.level || 'Sin nivel definido'}</p>
                 </div>
               ))}
             </div>
@@ -1323,6 +1592,214 @@ const CoordinatorDashboard = () => {
         </div>
       )}
 
+      {showSectionModal && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modal, maxWidth: '980px' }}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Nueva seccion con estudiantes</h2>
+              <button onClick={() => setShowSectionModal(false)} style={styles.closeBtn}><X size={20} /></button>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={styles.twoCol}>
+                <div style={styles.fieldGroup}>
+                  <label style={styles.label}>Nombre de la seccion</label>
+                  <input style={styles.input} placeholder="Ej: 5to A" value={sectionForm.name}
+                    onChange={e => { setSectionForm(p => ({ ...p, name: e.target.value })); setFormError('') }} />
+                </div>
+                <div style={styles.fieldGroup}>
+                  <label style={styles.label}>Nivel o grado</label>
+                  <input style={styles.input} placeholder="Ej: Segundo ciclo" value={sectionForm.level}
+                    onChange={e => setSectionForm(p => ({ ...p, level: e.target.value }))} />
+                </div>
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Periodo academico</label>
+                <select style={styles.input} value={sectionForm.period_id}
+                  onChange={e => { setSectionForm(p => ({ ...p, period_id: e.target.value })); setFormError('') }}>
+                  <option value="">Selecciona un periodo</option>
+                  {periods.map(period => <option key={period.id} value={period.id}>{period.name}</option>)}
+                </select>
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Materias y profesores asignados</label>
+                <div style={styles.assignmentGrid}>
+                  {teacherSubjects.length === 0 ? (
+                    <div style={styles.infoBox}>
+                      No hay profesores enlazados a materias todavia. Puedes crear la seccion con sus estudiantes ahora y volver a asignar profesor/materia cuando existan.
+                    </div>
+                  ) : teacherSubjects.map(item => {
+                    const checked = sectionForm.teacher_subject_ids.includes(item.id)
+                    return (
+                      <button key={item.id} type="button" onClick={() => toggleTeacherSubject(item.id)}
+                        style={{ ...styles.assignmentOption, borderColor: checked ? '#6C63FF' : '#E2E8F0', backgroundColor: checked ? '#EEF2FF' : '#fff' }}>
+                        <span style={styles.assignmentTitle}>{item.subjects?.name}</span>
+                        <span style={styles.assignmentMeta}>{item.users?.full_name} - {item.subjects?.type === 'workshop' ? 'Taller' : 'Academica'}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div style={styles.fieldGroup}>
+                <div style={styles.sectionHeader}>
+                  <label style={styles.label}>Estudiantes y tutor</label>
+                  <button type="button" onClick={addStudentRow} style={styles.secondaryButton}>
+                    <Plus size={14} style={{ marginRight: '6px' }} />Agregar fila
+                  </button>
+                </div>
+                <div style={styles.studentRows}>
+                  {sectionForm.students.map((student, index) => (
+                    <div key={index} style={styles.studentBundleRow}>
+                      <input style={styles.studentInput} placeholder="Nombre estudiante" value={student.full_name}
+                        onChange={e => updateStudentRow(index, 'full_name', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Correo estudiante" type="email" value={student.email}
+                        onChange={e => updateStudentRow(index, 'email', e.target.value)} />
+                      <input style={styles.smallInput} placeholder="Edad" type="number" value={student.age}
+                        onChange={e => updateStudentRow(index, 'age', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Telefono" value={student.phone}
+                        onChange={e => updateStudentRow(index, 'phone', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Nombre tutor" value={student.tutor_name}
+                        onChange={e => updateStudentRow(index, 'tutor_name', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Correo tutor" type="email" value={student.tutor_email}
+                        onChange={e => updateStudentRow(index, 'tutor_email', e.target.value)} />
+                      {sectionForm.students.length > 1 && (
+                        <button type="button" onClick={() => removeStudentRow(index)} style={styles.deleteBtn}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <p style={styles.emptySubtext}>Contrasena temporal por defecto para estudiantes y tutores: 123456.</p>
+              {formError && <div style={styles.errorBox}>{formError}</div>}
+            </div>
+            <div style={styles.modalFooter}>
+              <button onClick={() => setShowSectionModal(false)} style={styles.cancelBtn}>Cancelar</button>
+              <button onClick={handleCreateSectionBundle} disabled={formLoading}
+                style={{ ...styles.primaryButton, opacity: formLoading ? 0.7 : 1 }}>
+                {formLoading ? 'Creando...' : 'Crear seccion y asignar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditSectionModal && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modal, maxWidth: '980px' }}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Editar seccion</h2>
+              <button onClick={() => setShowEditSectionModal(false)} style={styles.closeBtn}><X size={20} /></button>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={styles.twoCol}>
+                <div style={styles.fieldGroup}>
+                  <label style={styles.label}>Nombre de la seccion</label>
+                  <input style={styles.input} placeholder="Ej: 5to A" value={editSectionForm.name}
+                    onChange={e => { setEditSectionForm(prev => ({ ...prev, name: e.target.value })); setFormError('') }} />
+                </div>
+                <div style={styles.fieldGroup}>
+                  <label style={styles.label}>Nivel o grado</label>
+                  <input style={styles.input} placeholder="Ej: Segundo ciclo" value={editSectionForm.level}
+                    onChange={e => setEditSectionForm(prev => ({ ...prev, level: e.target.value }))} />
+                </div>
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Periodo academico</label>
+                <select style={styles.input} value={editSectionForm.period_id}
+                  onChange={e => { setEditSectionForm(prev => ({ ...prev, period_id: e.target.value })); setFormError('') }}>
+                  <option value="">Selecciona un periodo</option>
+                  {periods.map(period => <option key={period.id} value={period.id}>{period.name}</option>)}
+                </select>
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Materias y profesores asignados</label>
+                <div style={styles.assignmentGrid}>
+                  {teacherSubjects.length === 0 ? (
+                    <div style={styles.infoBox}>
+                      No hay profesores enlazados a materias todavia.
+                    </div>
+                  ) : teacherSubjects.map(item => {
+                    const checked = editSectionForm.teacher_subject_ids.includes(item.id)
+                    return (
+                      <button key={item.id} type="button" onClick={() => toggleEditTeacherSubject(item.id)}
+                        style={{ ...styles.assignmentOption, borderColor: checked ? '#6C63FF' : '#E2E8F0', backgroundColor: checked ? '#EEF2FF' : '#fff' }}>
+                        <span style={styles.assignmentTitle}>{item.subjects?.name}</span>
+                        <span style={styles.assignmentMeta}>{item.users?.full_name} - {item.subjects?.type === 'workshop' ? 'Taller' : 'Academica'}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div style={styles.fieldGroup}>
+                <div style={styles.sectionHeader}>
+                  <label style={styles.label}>Estudiantes y tutor</label>
+                  <button type="button" onClick={addEditStudentRow} style={styles.secondaryButton}>
+                    <Plus size={14} style={{ marginRight: '6px' }} />Agregar fila
+                  </button>
+                </div>
+                <div style={styles.studentRows}>
+                  {editSectionForm.students.map((student, index) => (
+                    <div key={student.student_id || index} style={styles.studentBundleRow}>
+                      <input style={styles.studentInput} placeholder="Nombre estudiante" value={student.full_name}
+                        onChange={e => updateEditStudentRow(index, 'full_name', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Correo estudiante" type="email" value={student.email}
+                        onChange={e => updateEditStudentRow(index, 'email', e.target.value)} />
+                      <input style={styles.smallInput} placeholder="Edad" type="number" value={student.age || ''}
+                        onChange={e => updateEditStudentRow(index, 'age', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Telefono" value={student.phone || ''}
+                        onChange={e => updateEditStudentRow(index, 'phone', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Nombre tutor" value={student.tutor_name || ''}
+                        onChange={e => updateEditStudentRow(index, 'tutor_name', e.target.value)} />
+                      <input style={styles.studentInput} placeholder="Correo tutor" type="email" value={student.tutor_email || ''}
+                        onChange={e => updateEditStudentRow(index, 'tutor_email', e.target.value)} />
+                      {editSectionForm.students.length > 1 && (
+                        <button type="button" onClick={() => removeEditStudentRow(index)} style={styles.deleteBtn}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <p style={styles.emptySubtext}>Puedes agregar nuevos estudiantes. Si quitas una fila existente, se desinscribe de la seccion.</p>
+              {formError && <div style={styles.errorBox}>{formError}</div>}
+            </div>
+            <div style={styles.modalFooter}>
+              <button onClick={() => setShowEditSectionModal(false)} style={styles.cancelBtn}>Cancelar</button>
+              <button onClick={handleEditSection} disabled={formLoading}
+                style={{ ...styles.primaryButton, opacity: formLoading ? 0.7 : 1 }}>
+                {formLoading ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteSectionModal && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modal, maxWidth: '420px' }}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Eliminar seccion</h2>
+              <button onClick={() => setShowDeleteSectionModal(false)} style={styles.closeBtn}><X size={20} /></button>
+            </div>
+            <div style={styles.modalBody}>
+              <p style={{ fontSize: '14px', color: '#475569', margin: 0 }}>
+                Estas seguro de que quieres eliminar <strong>{selectedSection?.name}</strong>? Tambien se eliminaran sus aulas, actividades, calificaciones y recuperaciones asociadas.
+              </p>
+              {formError && <div style={styles.errorBox}>{formError}</div>}
+            </div>
+            <div style={styles.modalFooter}>
+              <button onClick={() => setShowDeleteSectionModal(false)} style={styles.cancelBtn}>Cancelar</button>
+              <button onClick={handleDeleteSection} disabled={formLoading}
+                style={{ ...styles.primaryButton, background: '#EF4444', boxShadow: 'none', opacity: formLoading ? 0.7 : 1 }}>
+                {formLoading ? 'Eliminando...' : 'Si, eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal crear profesor */}
       {showModal && (
         <div style={styles.modalOverlay}>
@@ -1511,9 +1988,22 @@ const CoordinatorDashboard = () => {
               <div style={styles.fieldGroup}>
                 <label style={styles.label}>Nombre de la materia</label>
                 <input style={styles.input} value={editSubjectForm.name}
-                  onChange={e => { setEditSubjectForm({ name: e.target.value }); setFormError('') }}
+                  onChange={e => { setEditSubjectForm(prev => ({ ...prev, name: e.target.value })); setFormError('') }}
                   onFocus={e => e.target.style.borderColor = '#6C63FF'}
                   onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Profesor asignado</label>
+                <div style={styles.selectWrapper}>
+                  <select style={styles.selectInput} value={editSubjectForm.teacherId}
+                    onChange={e => { setEditSubjectForm(prev => ({ ...prev, teacherId: e.target.value })); setFormError('') }}>
+                    <option value="">Sin profesor asignado</option>
+                    {teachers.map(teacher => (
+                      <option key={teacher.id} value={teacher.id}>{teacher.full_name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} style={styles.selectIcon} />
+                </div>
               </div>
               {formError && <div style={styles.errorBox}>{formError}</div>}
             </div>
@@ -1730,6 +2220,7 @@ const styles = {
   statLabel: { fontSize: '13px', color: '#94A3B8', margin: 0 },
   successBox: { display: 'flex', alignItems: 'center', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', color: '#10B981', padding: '12px 16px', borderRadius: '12px', fontSize: '14px', marginBottom: '20px' },
   section: { backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #F1F5F9' },
+  sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' },
   sectionTitle: { fontSize: '16px', fontWeight: '600', color: '#1E293B', margin: '0 0 20px' },
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px', gap: '8px' },
   emptyText: { fontSize: '14px', color: '#94A3B8', margin: 0 },
@@ -1764,14 +2255,24 @@ const styles = {
   modalBody: { padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' },
   modalFooter: { display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '16px 24px', borderTop: '1px solid #F1F5F9' },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  twoCol: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
   label: { fontSize: '12px', fontWeight: '600', color: '#475569' },
   input: { padding: '11px 14px', borderRadius: '12px', border: '1.5px solid #E2E8F0', fontSize: '14px', color: '#1E293B', outline: 'none', transition: 'border-color 0.2s', width: '100%', boxSizing: 'border-box', backgroundColor: '#F8FAFC' },
+  assignmentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px', maxHeight: '180px', overflowY: 'auto' },
+  assignmentOption: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', padding: '12px', borderRadius: '12px', border: '1.5px solid #E2E8F0', cursor: 'pointer', textAlign: 'left' },
+  assignmentTitle: { fontSize: '13px', fontWeight: '700', color: '#1E293B' },
+  assignmentMeta: { fontSize: '12px', color: '#64748B' },
+  studentRows: { display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' },
+  studentBundleRow: { display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 70px 1fr 1fr 1.2fr 34px', gap: '8px', alignItems: 'center' },
+  studentInput: { padding: '9px 10px', borderRadius: '10px', border: '1.5px solid #E2E8F0', fontSize: '13px', color: '#1E293B', outline: 'none', backgroundColor: '#F8FAFC', minWidth: 0 },
+  smallInput: { padding: '9px 8px', borderRadius: '10px', border: '1.5px solid #E2E8F0', fontSize: '13px', color: '#1E293B', outline: 'none', backgroundColor: '#F8FAFC', minWidth: 0 },
   selectWrapper: { position: 'relative' },
   selectInput: { padding: '11px 14px', paddingRight: '36px', borderRadius: '12px', border: '1.5px solid #E2E8F0', fontSize: '14px', color: '#1E293B', outline: 'none', width: '100%', boxSizing: 'border-box', backgroundColor: '#F8FAFC', appearance: 'none', cursor: 'pointer' },
   selectIcon: { position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' },
   passwordWrapper: { position: 'relative' },
   eyeButton: { position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' },
   warningText: { fontSize: '13px', color: '#F97316', margin: 0, padding: '10px 14px', backgroundColor: '#FFF7ED', borderRadius: '10px', border: '1px solid #FED7AA' },
+  infoBox: { fontSize: '13px', color: '#64748B', margin: 0, padding: '10px 14px', backgroundColor: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0', gridColumn: '1 / -1' },
   errorBox: { backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', padding: '10px 14px', borderRadius: '10px', fontSize: '13px' },
   cancelBtn: { padding: '10px 18px', borderRadius: '12px', border: '1.5px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
 }

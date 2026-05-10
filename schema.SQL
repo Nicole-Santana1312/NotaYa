@@ -22,6 +22,10 @@ institution_id  UUID NOT NULL REFERENCES institutions(id) ON DELETE CASCADE,
 email           TEXT NOT NULL UNIQUE, 
 full_name       TEXT NOT NULL, 
 role            TEXT NOT NULL, 
+age             INTEGER,
+gender          TEXT,
+phone           TEXT,
+birth_date      DATE,
 active          BOOLEAN NOT NULL DEFAULT TRUE, 
 created_by      UUID REFERENCES users(id), 
 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(), 
@@ -31,7 +35,13 @@ CONSTRAINT valid_role CHECK (role IN (
 )) 
 ); 
 
-2. TABLAS BASE 
+-- Parches para bases existentes: CREATE TABLE IF NOT EXISTS no agrega columnas nuevas
+ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date DATE;
+
+-- 2. TABLAS BASE 
 
 CREATE TABLE IF NOT EXISTS academic_periods ( 
 id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(), 
@@ -64,9 +74,9 @@ type            TEXT NOT NULL,
 CONSTRAINT valid_type CHECK (type IN ('academic', 'workshop')) 
 ); 
 
- 3. TABLAS INTERMEDIAS
+-- 3. TABLAS INTERMEDIAS
 
- CREATE TABLE IF NOT EXISTS teacher_subjects ( 
+CREATE TABLE IF NOT EXISTS teacher_subjects ( 
 id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(), 
 teacher_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, 
 subject_id      UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE, 
@@ -90,6 +100,13 @@ student_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 enrolled_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(), 
 UNIQUE(classroom_id, student_id) 
 ); 
+CREATE TABLE IF NOT EXISTS section_students (
+id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+section_id      UUID NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+student_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+enrolled_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+UNIQUE(section_id, student_id)
+);
 CREATE TABLE IF NOT EXISTS student_tutors ( 
 id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(), 
 student_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, 
@@ -98,7 +115,7 @@ created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 UNIQUE(student_id, tutor_id) 
 );
 
-4. TABLAS DE EVALUACION 
+-- 4. TABLAS DE EVALUACION 
 
 CREATE TABLE IF NOT EXISTS learning_outcomes ( 
 id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(), 
@@ -147,6 +164,11 @@ CREATE TABLE IF NOT EXISTS recoveries (
   classroom_id    UUID NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE, 
   attempt_number  INTEGER NOT NULL, 
   description     TEXT, 
+  due_date        DATE,
+  submission_comment TEXT,
+  submission_file_url TEXT,
+  submitted_at    TIMESTAMPTZ,
+  updated_at      TIMESTAMPTZ,
   score           NUMERIC(5,2), 
   passed          BOOLEAN, 
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(), 
@@ -155,6 +177,12 @@ CREATE TABLE IF NOT EXISTS recoveries (
   CONSTRAINT valid_attempt CHECK (attempt_number IN (1, 2)), 
   CONSTRAINT max_recovery_score CHECK (score IS NULL OR score <= 70) 
 ); 
+
+ALTER TABLE recoveries ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE recoveries ADD COLUMN IF NOT EXISTS submission_comment TEXT;
+ALTER TABLE recoveries ADD COLUMN IF NOT EXISTS submission_file_url TEXT;
+ALTER TABLE recoveries ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+ALTER TABLE recoveries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
  
 CREATE TABLE IF NOT EXISTS competencies (
 id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -309,7 +337,7 @@ CREATE INDEX IF NOT EXISTS idx_scales_institution ON evaluation_scales(instituti
 CREATE INDEX IF NOT EXISTS idx_self_assessments_activity ON self_assessments(activity_id);
 CREATE INDEX IF NOT EXISTS idx_peer_evaluations_activity ON peer_evaluations(activity_id);
 
-6. ROW LEVEL SECURITY 
+-- 6. ROW LEVEL SECURITY 
 ALTER TABLE institutions         ENABLE ROW LEVEL SECURITY; 
 ALTER TABLE users                ENABLE ROW LEVEL SECURITY; 
 ALTER TABLE academic_periods     ENABLE ROW LEVEL SECURITY; 
@@ -318,6 +346,7 @@ ALTER TABLE subjects             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE teacher_subjects     ENABLE ROW LEVEL SECURITY; 
 ALTER TABLE classrooms           ENABLE ROW LEVEL SECURITY; 
 ALTER TABLE classroom_students   ENABLE ROW LEVEL SECURITY; 
+ALTER TABLE section_students     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE student_tutors       ENABLE ROW LEVEL SECURITY; 
 ALTER TABLE learning_outcomes    ENABLE ROW LEVEL SECURITY; 
 ALTER TABLE activities           
@@ -338,7 +367,7 @@ ALTER TABLE self_assessments      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE peer_evaluations      ENABLE ROW LEVEL SECURITY; 
 
 
-7. FUNCIONES RPC 
+-- 7. FUNCIONES RPC 
 
 CREATE OR REPLACE FUNCTION register_institution( 
 p_institution_name TEXT, p_institution_code TEXT, p_country TEXT, 
@@ -551,7 +580,7 @@ CREATE POLICY "institution_isolation" ON peer_evaluations FOR ALL USING (
   )
 ); 
 
-8. REALTIME 
+-- 8. REALTIME 
 
 ALTER PUBLICATION supabase_realtime ADD TABLE activity_grades;
 ALTER PUBLICATION supabase_realtime ADD TABLE activities;

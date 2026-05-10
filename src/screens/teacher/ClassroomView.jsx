@@ -40,6 +40,7 @@ const ClassroomView = () => {
   const [showRAModal, setShowRAModal] = useState(false)
   const [raForm, setRaForm] = useState({ code: '', description: '', weight: '' })
   const [selectedRA, setSelectedRA] = useState(null)
+  const [editingRA, setEditingRA] = useState(null)
 
   // Notas
   const [grades, setGrades] = useState({})
@@ -53,6 +54,19 @@ const ClassroomView = () => {
   const [gradeInput, setGradeInput] = useState('')
   const [gradeComment, setGradeComment] = useState('')
   const [gradingLoading, setGradingLoading] = useState(false)
+
+  // Recuperaciones
+  const [recoveries, setRecoveries] = useState([])
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false)
+  const [editingRecovery, setEditingRecovery] = useState(null)
+  const [recoveryForm, setRecoveryForm] = useState({
+    student_id: '',
+    attempt_number: 1,
+    description: '',
+    due_date: '',
+    score: ''
+  })
+  const [recoveryLoading, setRecoveryLoading] = useState(false)
 
   const periods = ['P1', 'P2', 'P3', 'P4']
 
@@ -73,6 +87,7 @@ const ClassroomView = () => {
 
       await fetchStudents(cr.section_id)
       await fetchActivities(cr)
+      await fetchRecoveries(cr.id)
       if (workshop) await fetchLearningOutcomes(cr?.teacher_subjects?.subjects?.id)
     } catch (err) {
       console.error(err)
@@ -92,7 +107,7 @@ const ClassroomView = () => {
     setStudents(data || [])
   }
 
-  const fetchActivities = async (cr) => {
+  const fetchActivities = async () => {
     const { data } = await supabase
       .from('activities')
       .select('*')
@@ -100,6 +115,15 @@ const ClassroomView = () => {
       .order('created_at')
     setActivities(data || [])
     if (data?.length > 0) await fetchGrades(data)
+  }
+
+  const fetchRecoveries = async (classroomId) => {
+    const { data } = await supabase
+      .from('recoveries')
+      .select('*, users(id, full_name, email)')
+      .eq('classroom_id', classroomId)
+      .order('created_at')
+    setRecoveries(data || [])
   }
 
   const fetchGrades = async (acts) => {
@@ -268,11 +292,19 @@ const ClassroomView = () => {
   // ── NOTAS ────────────────────────────────────────────────
 
   const handleGradeChange = (activityId, studentId, value) => {
+    const act = activities.find(a => a.id === activityId)
+    const numValue = parseFloat(value)
+    if (act && value !== '' && !Number.isNaN(numValue) && numValue > act.max_score) {
+      setFormError(`La nota de ${act.name} no puede exceder ${act.max_score} puntos.`)
+      return
+    }
+    setFormError('')
     setGrades(prev => ({ ...prev, [activityId]: { ...(prev[activityId] || {}), [studentId]: value } }))
   }
 
   const handleSaveGrades = async () => {
     setSavingGrades(true)
+    setFormError('')
     try {
       const upserts = []
       Object.entries(grades).forEach(([actId, studentGrades]) => {
@@ -280,7 +312,11 @@ const ClassroomView = () => {
         if (!act) return
         Object.entries(studentGrades).forEach(([stuId, score]) => {
           if (score === '' || score === null || score === undefined) return
-          const numScore = Math.min(parseFloat(score), act.max_score)
+          const numScore = parseFloat(score)
+          if (Number.isNaN(numScore)) return
+          if (numScore > act.max_score) {
+            throw new Error(`La nota de ${act.name} excede el limite de ${act.max_score} puntos.`)
+          }
           upserts.push({
             activity_id: actId, student_id: stuId, score: numScore,
             status: 'graded', graded_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -350,7 +386,12 @@ const ClassroomView = () => {
   const handleGradeFromSubmission = async () => {
     if (gradeInput === '') { setFormError('Ingresa una nota.'); return }
     const act = activities.find(a => a.id === selectedSubmission.activity_id)
-    const numScore = Math.min(parseFloat(gradeInput), act?.max_score || 100)
+    const numScore = parseFloat(gradeInput)
+    if (Number.isNaN(numScore)) { setFormError('Ingresa una nota valida.'); return }
+    if (act && numScore > act.max_score) {
+      setFormError(`La nota excede el limite de ${act.max_score} puntos.`)
+      return
+    }
     setGradingLoading(true)
     setFormError('')
     try {
@@ -376,6 +417,145 @@ const ClassroomView = () => {
     }
   }
 
+  const handleCreateRecovery = async () => {
+    if (!recoveryForm.student_id || !recoveryForm.description.trim()) {
+      setFormError('Selecciona estudiante y descripción.')
+      return
+    }
+    setRecoveryLoading(true)
+    setFormError('')
+    try {
+      const { error } = await supabase
+        .from('recoveries')
+        .insert({
+          student_id: recoveryForm.student_id,
+          classroom_id: classroomId,
+          attempt_number: recoveryForm.attempt_number,
+          description: recoveryForm.description.trim(),
+          due_date: recoveryForm.due_date || null,
+          score: recoveryForm.score ? parseFloat(recoveryForm.score) : null,
+          passed: recoveryForm.score ? parseFloat(recoveryForm.score) >= 35 : null,
+          graded_at: recoveryForm.score ? new Date().toISOString() : null,
+        })
+      if (error) throw error
+      showSuccessMsg('Recuperación creada exitosamente.')
+      setShowRecoveryModal(false)
+      setRecoveryForm({ student_id: '', attempt_number: 1, description: '', due_date: '', score: '' })
+      fetchRecoveries(classroomId)
+    } catch (err) {
+      setFormError(err.message)
+    } finally {
+      setRecoveryLoading(false)
+    }
+  }
+
+  const openCreateRecoveryModal = () => {
+    setEditingRecovery(null)
+    setRecoveryForm({ student_id: '', attempt_number: 1, description: '', due_date: '', score: '' })
+    setFormError('')
+    setShowRecoveryModal(true)
+  }
+
+  const openEditRecoveryModal = (recovery) => {
+    setEditingRecovery(recovery)
+    setRecoveryForm({
+      student_id: recovery.student_id,
+      attempt_number: recovery.attempt_number,
+      description: recovery.description || '',
+      due_date: recovery.due_date || '',
+      score: recovery.score ?? '',
+    })
+    setFormError('')
+    setShowRecoveryModal(true)
+  }
+
+  const handleSaveRecovery = async () => {
+    if (!recoveryForm.student_id || !recoveryForm.description.trim()) {
+      setFormError('Selecciona estudiante y descripciÃ³n.')
+      return
+    }
+
+    if (!editingRecovery) {
+      await handleCreateRecovery()
+      return
+    }
+
+    setRecoveryLoading(true)
+    setFormError('')
+    try {
+      const score = recoveryForm.score === '' ? null : parseFloat(recoveryForm.score)
+      const { error } = await supabase
+        .from('recoveries')
+        .update({
+          student_id: recoveryForm.student_id,
+          attempt_number: recoveryForm.attempt_number,
+          description: recoveryForm.description.trim(),
+          due_date: recoveryForm.due_date || null,
+          score,
+          passed: score === null ? null : score >= 35,
+          graded_at: score === null ? null : new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', editingRecovery.id)
+
+      if (error) throw error
+      showSuccessMsg('RecuperaciÃ³n actualizada.')
+      setShowRecoveryModal(false)
+      setEditingRecovery(null)
+      setRecoveryForm({ student_id: '', attempt_number: 1, description: '', due_date: '', score: '' })
+      fetchRecoveries(classroomId)
+    } catch (err) {
+      setFormError(err.message)
+    } finally {
+      setRecoveryLoading(false)
+    }
+  }
+
+  const handleDeleteRecovery = async (recoveryId) => {
+    if (!window.confirm('Seguro que quieres eliminar esta recuperacion? Tambien se eliminara su entrega y calificacion.')) return
+    setFormError('')
+    try {
+      const { error } = await supabase.from('recoveries').delete().eq('id', recoveryId)
+      if (error) throw error
+      showSuccessMsg('RecuperaciÃ³n eliminada.')
+      fetchRecoveries(classroomId)
+    } catch (err) {
+      setFormError(err.message || 'No se pudo eliminar la recuperacion.')
+    }
+  }
+
+  const openRecoveryModalForStudent = (student, attemptNumber) => {
+    setEditingRecovery(null)
+    setRecoveryForm({
+      student_id: student.id,
+      attempt_number: attemptNumber,
+      description: `${attemptNumber === 1 ? 'Primera' : 'Segunda'} recuperacion de ${subjectName || 'la materia'}`,
+      due_date: '',
+      score: '',
+    })
+    setFormError('')
+    setShowRecoveryModal(true)
+  }
+
+  const handleUpdateRecoveryScore = async (recoveryId, score) => {
+    try {
+      const numScore = parseFloat(score)
+      const { error } = await supabase
+        .from('recoveries')
+        .update({
+          score: numScore,
+          passed: numScore >= 35,
+          graded_at: new Date().toISOString(),
+        })
+        .eq('id', recoveryId)
+      if (error) throw error
+      showSuccessMsg('Nota de recuperación actualizada.')
+      fetchRecoveries(classroomId)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   const getFileUrl = async (path) => {
     const { data } = await supabase.storage.from('submissions').createSignedUrl(path, 60)
     if (data?.signedUrl) window.open(data.signedUrl, '_blank')
@@ -391,6 +571,79 @@ const ClassroomView = () => {
   const subjectName = classroom?.teacher_subjects?.subjects?.name
   const sectionName = classroom?.sections?.name
   const periodName = classroom?.academic_periods?.name
+  const submissionActivityGroups = isWorkshop
+    ? [
+      ...learningOutcomes.map(ra => ({
+        key: ra.id,
+        title: `${ra.code} - ${ra.description}`,
+        activities: activities.filter(act => act.learning_outcome_id === ra.id),
+      })),
+      {
+        key: 'unassigned',
+        title: 'Sin RA asignado',
+        activities: activities.filter(act => !act.learning_outcome_id),
+      },
+    ].filter(group => group.activities.length > 0)
+    : [{ key: 'all', title: 'Actividades', activities }]
+  const getStudentRecoveryAction = (studentId, visibleActivities) => {
+    if (!studentId || visibleActivities.length === 0) return null
+    const allGraded = visibleActivities.every(act => {
+      const score = grades[act.id]?.[studentId]
+      return score !== '' && score !== null && score !== undefined
+    })
+    if (!allGraded) return null
+
+    const total = visibleActivities.reduce((sum, act) => {
+      const score = parseFloat(grades[act.id]?.[studentId] ?? 0)
+      return sum + (Number.isNaN(score) ? 0 : score)
+    }, 0)
+    const maxTotal = visibleActivities.reduce((sum, act) => sum + act.max_score, 0)
+    const pct = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : 0
+    if (pct >= 70) return null
+
+    const studentRecoveries = recoveries.filter(recovery => recovery.student_id === studentId)
+    const firstRecovery = studentRecoveries.find(recovery => recovery.attempt_number === 1)
+    const secondRecovery = studentRecoveries.find(recovery => recovery.attempt_number === 2)
+
+    if (!firstRecovery) return { attemptNumber: 1, label: 'Dar primera recuperacion' }
+    if (firstRecovery.passed === false && !secondRecovery) return { attemptNumber: 2, label: 'Dar segunda recuperacion' }
+    return null
+  }
+  const isActivityFullyGraded = (activityId) => {
+    if (students.length === 0) return false
+    return students.every(ss => {
+      const stuId = ss.users?.id
+      const score = grades[activityId]?.[stuId]
+      return score !== '' && score !== null && score !== undefined
+    })
+  }
+
+  const handleSaveRA = async () => {
+    if (!raForm.code || !raForm.description || !raForm.weight) { setFormError('Todos los campos son obligatorios.'); return }
+    const otherWeight = learningOutcomes
+      .filter(ra => ra.id !== editingRA?.id)
+      .reduce((sum, ra) => sum + ra.weight, 0)
+    if (otherWeight + parseInt(raForm.weight) > 100) { setFormError(`Disponible: ${100 - otherWeight} pts`); return }
+    setFormLoading(true)
+    setFormError('')
+    try {
+      const { error } = await supabase.from('learning_outcomes').update({
+        code: raForm.code,
+        description: raForm.description,
+        weight: parseInt(raForm.weight),
+      }).eq('id', editingRA.id)
+      if (error) throw error
+      showSuccessMsg('RA actualizado.')
+      setShowRAModal(false)
+      setEditingRA(null)
+      setRaForm({ code: '', description: '', weight: '' })
+      fetchLearningOutcomes(classroom?.teacher_subjects?.subjects?.id)
+    } catch (err) {
+      setFormError(err.message)
+    } finally {
+      setFormLoading(false)
+    }
+  }
 
   return (
     <div style={styles.page}>
@@ -406,6 +659,7 @@ const ClassroomView = () => {
             { key: 'students', icon: <Users size={18} />, label: 'Estudiantes' },
             { key: 'grades', icon: <BookOpen size={18} />, label: 'Evaluación' },
             { key: 'submissions', icon: <FileText size={18} />, label: 'Entregas' },
+            { key: 'recoveries', icon: <Clock size={18} />, label: 'Recuperaciones' },
           ].map(item => (
             <div key={item.key}
               style={{ ...styles.navItem, ...(activeTab === item.key ? styles.navActive : {}) }}
@@ -451,15 +705,16 @@ const ClassroomView = () => {
             <Check size={16} style={{ marginRight: '8px' }} />{success}
           </div>
         )}
+        {formError && <div style={{ ...styles.errorBox, marginBottom: '20px' }}>{formError}</div>}
 
         {/* ── TAB: ESTUDIANTES ── */}
         {activeTab === 'students' && (
           <div style={styles.section}>
             <div style={styles.sectionHeader}>
               <h2 style={styles.sectionTitle}>Estudiantes ({students.length})</h2>
-              <button onClick={() => { setShowAddStudents(!showAddStudents); setFormError('') }} style={styles.primaryButton}>
-                <Plus size={16} style={{ marginRight: '6px' }} /> Agregar estudiantes
-              </button>
+            </div>
+            <div style={{ ...styles.infoBox, marginBottom: '18px' }}>
+              Los estudiantes, secciones, tutores y asignaciones de aulas son gestionados por el administrador.
             </div>
 
             {showAddStudents && (
@@ -562,7 +817,7 @@ const ClassroomView = () => {
                       </strong>
                     </p>
                   </div>
-                  <button onClick={() => { setShowRAModal(true); setFormError('') }} style={styles.secondaryButton}>
+                  <button onClick={() => { setEditingRA(null); setRaForm({ code: '', description: '', weight: '' }); setShowRAModal(true); setFormError('') }} style={styles.secondaryButton}>
                     <Plus size={14} style={{ marginRight: '4px' }} /> Nuevo RA
                   </button>
                 </div>
@@ -583,6 +838,9 @@ const ClassroomView = () => {
                         </div>
                         <div style={styles.raCardRight}>
                           <span style={styles.raWeight}>{ra.weight} pts</span>
+                          <button onClick={e => { e.stopPropagation(); setEditingRA(ra); setRaForm({ code: ra.code, description: ra.description, weight: String(ra.weight) }); setShowRAModal(true); setFormError('') }} style={styles.editGradeBtn}>
+                            Editar
+                          </button>
                           <button onClick={e => { e.stopPropagation(); handleDeleteRA(ra.id) }} style={styles.deleteBtn}>
                             <Trash2 size={13} />
                           </button>
@@ -622,10 +880,16 @@ const ClassroomView = () => {
                       <tr>
                         <th style={{ ...styles.th, minWidth: '160px' }}>Estudiante</th>
                         {currentActivities.map(act => (
-                          <th key={act.id} style={styles.activityHeader}>
+                          <th key={act.id} style={{
+                            ...styles.activityHeader,
+                            backgroundColor: isActivityFullyGraded(act.id) ? '#ECFDF5' : 'transparent',
+                          }}>
                             <div style={styles.activityHeaderContent}>
                               <span style={styles.activityName}>{act.name}</span>
                               <span style={styles.activityMax}>/{act.max_score}</span>
+                              {isActivityFullyGraded(act.id) && (
+                                <span style={styles.gradedBadge}>Calificada</span>
+                              )}
                               <button onClick={() => handleDeleteActivity(act.id)} style={styles.deleteActivityBtn}>
                                 <Trash2 size={11} />
                               </button>
@@ -633,6 +897,7 @@ const ClassroomView = () => {
                           </th>
                         ))}
                         <th style={styles.th}>Total</th>
+                        <th style={styles.th}>Recuperacion</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -644,6 +909,7 @@ const ClassroomView = () => {
                         }, 0)
                         const maxTotal = currentActivities.reduce((sum, act) => sum + act.max_score, 0)
                         const pct = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : 0
+                        const recoveryAction = getStudentRecoveryAction(stuId, currentActivities)
                         return (
                           <tr key={ss.id} style={styles.tr}>
                             <td style={styles.td}>
@@ -665,6 +931,18 @@ const ClassroomView = () => {
                                 backgroundColor: pct >= 70 ? '#ECFDF5' : '#FEF2F2',
                                 color: pct >= 70 ? '#10B981' : '#EF4444',
                               }}>{pct}%</span>
+                            </td>
+                            <td style={styles.td}>
+                              {recoveryAction ? (
+                                <button
+                                  onClick={() => openRecoveryModalForStudent(ss.users, recoveryAction.attemptNumber)}
+                                  style={styles.recoveryInlineBtn}
+                                >
+                                  {recoveryAction.label}
+                                </button>
+                              ) : (
+                                <span style={styles.recoveryMutedText}>-</span>
+                              )}
                             </td>
                           </tr>
                         )
@@ -688,8 +966,12 @@ const ClassroomView = () => {
                   <p style={styles.emptyText}>No hay actividades creadas aún.</p>
                 </div>
               ) : (
-                <div style={styles.activitySelector}>
-                  {activities.map(act => {
+                <div style={styles.submissionGroupList}>
+                  {submissionActivityGroups.map(group => (
+                    <div key={group.key} style={styles.submissionGroup}>
+                      {isWorkshop && <h3 style={styles.submissionGroupTitle}>{group.title}</h3>}
+                      <div style={styles.activitySelector}>
+                        {group.activities.map(act => {
                     const isSelected = selectedActivity?.id === act.id
                     return (
                       <div key={act.id}
@@ -717,8 +999,11 @@ const ClassroomView = () => {
                           <span style={styles.submissionCountBadge}>{submissions.length} entrega(s)</span>
                         )}
                       </div>
-                    )
-                  })}
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -816,6 +1101,116 @@ const ClassroomView = () => {
             )}
           </div>
         )}
+
+        {/* ── TAB: RECUPERACIONES ── */}
+        {activeTab === 'recoveries' && (
+          <div>
+            <div style={styles.section}>
+              <div style={styles.sectionHeader}>
+                <h2 style={styles.sectionTitle}>Recuperaciones</h2>
+                <button onClick={openCreateRecoveryModal} style={styles.primaryButton}>
+                  <Plus size={16} style={{ marginRight: '6px' }} />
+                  Nueva recuperación
+                </button>
+              </div>
+
+              {recoveries.length === 0 ? (
+                <div style={styles.emptyState}>
+                  <Clock size={36} color="#CBD5E1" />
+                  <p style={styles.emptyText}>No hay recuperaciones aún.</p>
+                  <p style={styles.emptySubtext}>Crea la primera recuperación para estudiantes que necesiten mejorar su nota.</p>
+                </div>
+              ) : (
+                <div style={styles.recoveriesList}>
+                  {recoveries.map(recovery => (
+                    <div key={recovery.id} style={styles.recoveryCard}>
+                      <div style={styles.recoveryHeader}>
+                        <div>
+                          <h3 style={styles.recoveryStudent}>{recovery.users?.full_name}</h3>
+                          <p style={styles.recoveryAttempt}>Intento #{recovery.attempt_number}</p>
+                        </div>
+                        <div style={styles.recoveryScoreArea}>
+                          <button onClick={() => openEditRecoveryModal(recovery)} style={styles.editGradeBtn}>
+                            Editar
+                          </button>
+                          <button onClick={() => handleDeleteRecovery(recovery.id)} style={styles.deleteBtn}>
+                            <Trash2 size={13} />
+                          </button>
+                          {recovery.score !== null ? (
+                            <div style={{
+                              ...styles.recoveryScoreBadge,
+                              backgroundColor: recovery.passed ? '#ECFDF5' : '#FEF2F2',
+                              color: recovery.passed ? '#10B981' : '#EF4444',
+                            }}>
+                              {recovery.score}/70
+                            </div>
+                          ) : recovery.submitted_at ? (
+                            <input
+                              style={styles.recoveryScoreInput}
+                              type="number"
+                              min="0"
+                              max="70"
+                              placeholder="Nota"
+                              onBlur={e => {
+                                if (e.target.value) {
+                                  handleUpdateRecoveryScore(recovery.id, e.target.value)
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span style={styles.recoveryPending}>Esperando entrega</span>
+                          )}
+                        </div>
+                      </div>
+                      <p style={styles.recoveryDesc}>{recovery.description}</p>
+                      <div style={styles.recoverySubmissionBox}>
+                        {recovery.submitted_at ? (
+                          <>
+                            <div style={styles.submissionDetails}>
+                              {recovery.submission_comment && (
+                                <div style={styles.submissionComment}>
+                                  <MessageSquare size={13} color="#6C63FF" />
+                                  <span style={styles.submissionCommentText}>{recovery.submission_comment}</span>
+                                </div>
+                              )}
+                              {recovery.submission_file_url && (
+                                <button onClick={() => getFileUrl(recovery.submission_file_url)} style={styles.downloadBtn}>
+                                  <Download size={13} style={{ marginRight: '4px' }} /> Ver archivo
+                                </button>
+                              )}
+                              <span style={styles.submittedAt}>
+                                Entregada: {new Date(recovery.submitted_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <span style={styles.noSubmissionBadge}>
+                            <Clock size={12} style={{ marginRight: '4px' }} /> Pendiente de entrega
+                          </span>
+                        )}
+                      </div>
+                      <div style={styles.recoveryMeta}>
+                        <span style={styles.recoveryDate}>
+                          Creada: {new Date(recovery.created_at).toLocaleDateString()}
+                        </span>
+                        {recovery.due_date && (
+                          <span style={styles.recoveryDate}>
+                            Fecha limite: {new Date(recovery.due_date).toLocaleDateString()}
+                          </span>
+                        )}
+                        {recovery.graded_at && (
+                          <span style={styles.recoveryDate}>
+                            Calificada: {new Date(recovery.graded_at).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal nueva actividad */}
@@ -900,12 +1295,12 @@ const ClassroomView = () => {
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
             <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>Nuevo RA</h2>
-              <button onClick={() => setShowRAModal(false)} style={styles.closeBtn}><X size={20} /></button>
+              <h2 style={styles.modalTitle}>{editingRA ? 'Editar RA' : 'Nuevo RA'}</h2>
+              <button onClick={() => { setShowRAModal(false); setEditingRA(null) }} style={styles.closeBtn}><X size={20} /></button>
             </div>
             <div style={styles.modalBody}>
               <div style={styles.infoBox}>
-                Peso disponible: <strong>{100 - totalRAWeight} puntos</strong>
+                Peso disponible: <strong>{editingRA ? 100 - totalRAWeight + editingRA.weight : 100 - totalRAWeight} puntos</strong>
               </div>
               <div style={styles.fieldGroup}>
                 <label style={styles.label}>Código</label>
@@ -923,7 +1318,7 @@ const ClassroomView = () => {
               </div>
               <div style={styles.fieldGroup}>
                 <label style={styles.label}>Peso (puntos)</label>
-                <input style={styles.input} type="number" min="1" max={100 - totalRAWeight}
+                <input style={styles.input} type="number" min="1" max={editingRA ? 100 - totalRAWeight + editingRA.weight : 100 - totalRAWeight}
                   placeholder={`Máximo ${100 - totalRAWeight}`} value={raForm.weight}
                   onChange={e => { setRaForm(p => ({ ...p, weight: e.target.value })); setFormError('') }}
                   onFocus={e => e.target.style.borderColor = '#6C63FF'}
@@ -932,10 +1327,10 @@ const ClassroomView = () => {
               {formError && <div style={styles.errorBox}>{formError}</div>}
             </div>
             <div style={styles.modalFooter}>
-              <button onClick={() => setShowRAModal(false)} style={styles.cancelBtn}>Cancelar</button>
-              <button onClick={handleCreateRA} disabled={formLoading}
+              <button onClick={() => { setShowRAModal(false); setEditingRA(null) }} style={styles.cancelBtn}>Cancelar</button>
+              <button onClick={editingRA ? handleSaveRA : handleCreateRA} disabled={formLoading}
                 style={{ ...styles.primaryButton, opacity: formLoading ? 0.7 : 1 }}>
-                {formLoading ? 'Creando...' : 'Crear RA'}
+                {formLoading ? 'Guardando...' : editingRA ? 'Guardar RA' : 'Crear RA'}
               </button>
             </div>
           </div>
@@ -992,6 +1387,70 @@ const ClassroomView = () => {
               <button onClick={handleGradeFromSubmission} disabled={gradingLoading}
                 style={{ ...styles.primaryButton, opacity: gradingLoading ? 0.7 : 1 }}>
                 {gradingLoading ? 'Guardando...' : 'Guardar nota'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal nueva recuperación */}
+      {showRecoveryModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>{editingRecovery ? 'Editar recuperacion' : 'Nueva recuperación'}</h2>
+              <button onClick={() => { setShowRecoveryModal(false); setEditingRecovery(null) }} style={styles.closeBtn}><X size={20} /></button>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Estudiante</label>
+                <select style={styles.input} value={recoveryForm.student_id}
+                  onChange={e => setRecoveryForm(p => ({ ...p, student_id: e.target.value }))}>
+                  <option value="">Selecciona un estudiante</option>
+                  {students.map(s => (
+                    <option key={s.users?.id} value={s.users?.id}>{s.users?.full_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Número de intento</label>
+                <select style={styles.input} value={recoveryForm.attempt_number}
+                  onChange={e => setRecoveryForm(p => ({ ...p, attempt_number: parseInt(e.target.value) }))}>
+                  <option value={1}>Primer intento</option>
+                  <option value={2}>Segundo intento</option>
+                </select>
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Descripción de la recuperación</label>
+                <textarea style={styles.textarea} rows={3}
+                  placeholder="Ej: Recuperación del examen parcial - conceptos básicos..."
+                  value={recoveryForm.description}
+                  onChange={e => { setRecoveryForm(p => ({ ...p, description: e.target.value })); setFormError('') }}
+                  onFocus={e => e.target.style.borderColor = '#6C63FF'}
+                  onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Nota <span style={{ color: '#94A3B8', fontWeight: 400 }}>(opcional, puedes calificar después)</span></label>
+                <input style={styles.input} type="number" min="0" max="70"
+                  placeholder="0 — 70"
+                  value={recoveryForm.score}
+                  onChange={e => setRecoveryForm(p => ({ ...p, score: e.target.value }))}
+                  onFocus={e => e.target.style.borderColor = '#6C63FF'}
+                  onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
+              </div>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Fecha limite <span style={{ color: '#94A3B8', fontWeight: 400 }}>(opcional)</span></label>
+                <input style={styles.input} type="date"
+                  value={recoveryForm.due_date}
+                  onChange={e => setRecoveryForm(p => ({ ...p, due_date: e.target.value }))} />
+              </div>
+              {formError && <div style={styles.errorBox}>{formError}</div>}
+            </div>
+            <div style={styles.modalFooter}>
+              <button onClick={() => { setShowRecoveryModal(false); setEditingRecovery(null) }} style={styles.cancelBtn}>Cancelar</button>
+              <button onClick={handleSaveRecovery} disabled={recoveryLoading}
+                style={{ ...styles.primaryButton, opacity: recoveryLoading ? 0.7 : 1 }}>
+                {recoveryLoading ? 'Guardando...' : editingRecovery ? 'Guardar cambios' : 'Crear recuperación'}
               </button>
             </div>
           </div>
@@ -1063,11 +1522,17 @@ const styles = {
   activityHeaderContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' },
   activityName: { fontSize: '11px', fontWeight: '600', color: '#475569', textAlign: 'center' },
   activityMax: { fontSize: '11px', color: '#94A3B8' },
+  gradedBadge: { fontSize: '10px', fontWeight: '700', color: '#10B981', backgroundColor: '#D1FAE5', padding: '2px 6px', borderRadius: '999px' },
   deleteActivityBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', display: 'flex', padding: '2px' },
   gradeCell: { padding: '8px', textAlign: 'center' },
   gradeInput: { width: '60px', padding: '6px 8px', borderRadius: '8px', border: '1.5px solid #E2E8F0', fontSize: '13px', textAlign: 'center', outline: 'none', backgroundColor: '#F8FAFC', color: '#1E293B' },
   totalBadge: { display: 'inline-block', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700' },
+  recoveryInlineBtn: { padding: '7px 12px', borderRadius: '10px', border: '1.5px solid #FBBF24', backgroundColor: '#FFFBEB', color: '#B45309', fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap' },
+  recoveryMutedText: { fontSize: '12px', color: '#CBD5E1' },
   infoBox: { backgroundColor: '#EEF2FF', border: '1px solid #C7D2FE', color: '#6C63FF', padding: '10px 14px', borderRadius: '10px', fontSize: '13px' },
+  submissionGroupList: { display: 'flex', flexDirection: 'column', gap: '16px' },
+  submissionGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  submissionGroupTitle: { fontSize: '13px', fontWeight: '700', color: '#475569', margin: 0, padding: '0 2px' },
   activitySelector: { display: 'flex', flexDirection: 'column', gap: '8px' },
   activitySelectorCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderRadius: '12px', cursor: 'pointer', transition: 'all 0.15s' },
   activitySelectorLeft: { display: 'flex', alignItems: 'center', gap: '12px' },
@@ -1115,6 +1580,24 @@ const styles = {
   submissionPreviewText: { fontSize: '14px', color: '#475569', margin: 0, lineHeight: '1.6' },
   errorBox: { backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', padding: '10px 14px', borderRadius: '10px', fontSize: '13px' },
   cancelBtn: { padding: '10px 18px', borderRadius: '12px', border: '1.5px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  recoveryCard: { backgroundColor: '#ffffff', border: '1px solid #F1F5F9', borderRadius: '12px', padding: '16px', marginBottom: '12px' },
+  recoveryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
+  recoveryStudent: { fontSize: '14px', fontWeight: '600', color: '#1E293B' },
+  recoveryAttempt: { fontSize: '12px', color: '#64748B', backgroundColor: '#EEF2FF', padding: '2px 8px', borderRadius: '6px' },
+  recoveryDesc: { fontSize: '13px', color: '#64748B', marginBottom: '12px' },
+  recoverySubmissionBox: { backgroundColor: '#F8FAFC', border: '1px solid #F1F5F9', borderRadius: '10px', padding: '10px 12px', marginBottom: '12px' },
+  recoveryScore: { display: 'flex', alignItems: 'center', gap: '8px' },
+  recoveryScoreInput: { width: '80px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #E2E8F0', fontSize: '13px', textAlign: 'center' },
+  recoveryScoreBtn: { padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'linear-gradient(135deg, #6C63FF, #4FACFE)', color: '#fff', fontSize: '12px', fontWeight: '600', cursor: 'pointer' },
+  recoveryScoreDisplay: { fontSize: '14px', fontWeight: '600', color: '#10B981' },
+  recoveryDates: { fontSize: '12px', color: '#94A3B8', marginTop: '8px' },
+  recoveriesList: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  recoveryScoreArea: { display: 'flex', alignItems: 'center', gap: '8px' },
+  recoveryScoreBadge: { padding: '4px 10px', borderRadius: '8px', fontSize: '13px', fontWeight: '600' },
+  recoveryPending: { fontSize: '12px', color: '#F97316', fontStyle: 'italic' },
+  recoveryMeta: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' },
+  recoveryDate: { fontSize: '11px', color: '#94A3B8' },
+  emptySubtext: { fontSize: '12px', color: '#CBD5E1', margin: 0, textAlign: 'center' },
 }
 
 export default ClassroomView

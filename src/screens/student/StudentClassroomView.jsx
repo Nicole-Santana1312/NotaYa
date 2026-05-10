@@ -22,10 +22,12 @@ const StudentClassroomView = () => {
   const [activePeriod, setActivePeriod] = useState('P1')
   const [loading, setLoading] = useState(true)
   const [success, setSuccess] = useState('')
+  const [recoveries, setRecoveries] = useState([])
 
   // Modal de entrega
   const [showSubmitModal, setShowSubmitModal] = useState(false)
   const [selectedActivity, setSelectedActivity] = useState(null)
+  const [selectedRecovery, setSelectedRecovery] = useState(null)
   const [submitComment, setSubmitComment] = useState('')
   const [submitFile, setSubmitFile] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -94,6 +96,16 @@ const StudentClassroomView = () => {
           .order('created_at')
         setLearningOutcomes(ras || [])
       }
+
+      // Fetch recoveries
+      const { data: recs } = await supabase
+        .from('recoveries')
+        .select('*')
+        .eq('student_id', profile.id)
+        .eq('classroom_id', classroomId)
+        .order('created_at')
+      setRecoveries(recs || [])
+
     } catch (err) {
       console.error(err)
     } finally {
@@ -107,6 +119,11 @@ const StudentClassroomView = () => {
   }
 
   const openSubmitModal = (activity) => {
+    if (activity.due_date && new Date(activity.due_date) < new Date() && !submissions[activity.id]) {
+      setSubmitError('La fecha de entrega ya pasó. No puedes enviar esta tarea.')
+      return
+    }
+    setSelectedRecovery(null)
     setSelectedActivity(activity)
     const existing = submissions[activity.id]
     setSubmitComment(existing?.comment || '')
@@ -115,7 +132,72 @@ const StudentClassroomView = () => {
     setShowSubmitModal(true)
   }
 
+  const openRecoverySubmitModal = (recovery) => {
+    if (recovery.due_date && new Date(recovery.due_date) < new Date() && !recovery.submitted_at) {
+      setSubmitError('La fecha de entrega ya paso. No puedes enviar esta recuperacion.')
+      return
+    }
+    setSelectedActivity(null)
+    setSelectedRecovery(recovery)
+    setSubmitComment(recovery.submission_comment || '')
+    setSubmitFile(null)
+    setSubmitError('')
+    setShowSubmitModal(true)
+  }
+
   const handleSubmit = async () => {
+    if (selectedRecovery) {
+      if (selectedRecovery.due_date && new Date(selectedRecovery.due_date) < new Date()) {
+        setSubmitError('La fecha de entrega ya paso. No puedes enviar esta recuperacion.')
+        return
+      }
+      if (!submitComment.trim() && !submitFile) {
+        setSubmitError('Agrega un comentario o un archivo.')
+        return
+      }
+      setSubmitting(true)
+      setSubmitError('')
+      try {
+        let fileUrl = selectedRecovery.submission_file_url || null
+        if (submitFile) {
+          const ext = submitFile.name.split('.').pop()
+          const path = `${profile.id}/recoveries/${selectedRecovery.id}.${ext}`
+          const { error: uploadError } = await supabase.storage
+            .from('submissions')
+            .upload(path, submitFile, { upsert: true })
+          if (uploadError) throw uploadError
+          fileUrl = path
+        }
+
+        const { error } = await supabase
+          .from('recoveries')
+          .update({
+            submission_comment: submitComment.trim() || null,
+            submission_file_url: fileUrl,
+            submitted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', selectedRecovery.id)
+          .eq('student_id', profile.id)
+
+        if (error) throw error
+
+        showSuccessMsg('Recuperacion entregada exitosamente.')
+        setShowSubmitModal(false)
+        setSelectedRecovery(null)
+        fetchData()
+      } catch (err) {
+        setSubmitError(err.message || 'Ocurrio un error.')
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
+    if (selectedActivity?.due_date && new Date(selectedActivity.due_date) < new Date()) {
+      setSubmitError('La fecha de entrega ya pasó. No puedes enviar esta tarea.')
+      return
+    }
     if (!submitComment.trim() && !submitFile) {
       setSubmitError('Agrega un comentario o un archivo.')
       return
@@ -151,7 +233,6 @@ const StudentClassroomView = () => {
       if (error) throw error
 
       showSuccessMsg('Tarea entregada exitosamente.')
-      setShowSubmitModal(false)
       fetchData()
     } catch (err) {
       setSubmitError(err.message || 'Ocurrió un error.')
@@ -206,6 +287,9 @@ const StudentClassroomView = () => {
     const hasGrade = score !== null && score !== undefined
     const pct = hasGrade ? Math.round((score / act.max_score) * 100) : null
     const hasSubmission = !!submissions[act.id]
+    const isPastDue = act.due_date && new Date(act.due_date) < new Date()
+    const canSubmit = !isPastDue && !hasSubmission
+    const dueDateLabel = act.due_date ? ` · Entrega: ${new Date(act.due_date).toLocaleDateString()}` : ''
 
     return (
       <div style={styles.activityRow}>
@@ -216,23 +300,28 @@ const StudentClassroomView = () => {
           }} />
           <div>
             <p style={styles.activityName}>{act.name}</p>
-            <p style={styles.activityType}>{act.type} · Vale {act.max_score} pts</p>
+            <p style={styles.activityType}>{act.type} · Vale {act.max_score} pts{dueDateLabel}</p>
           </div>
         </div>
         <div style={styles.activityRight}>
           {/* Botón entregar */}
           <button
-            onClick={() => openSubmitModal(act)}
+            onClick={() => canSubmit ? openSubmitModal(act) : null}
+            disabled={!canSubmit}
             style={{
               ...styles.submitBtn,
-              backgroundColor: hasSubmission ? '#ECFDF5' : '#EEF2FF',
-              color: hasSubmission ? '#10B981' : '#6C63FF',
-              border: `1.5px solid ${hasSubmission ? '#A7F3D0' : '#C7D2FE'}`,
+              backgroundColor: hasSubmission ? '#ECFDF5' : canSubmit ? '#EEF2FF' : '#F8FAFC',
+              color: hasSubmission ? '#10B981' : canSubmit ? '#6C63FF' : '#94A3B8',
+              border: `1.5px solid ${hasSubmission ? '#A7F3D0' : canSubmit ? '#C7D2FE' : '#E2E8F0'}`,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+              opacity: canSubmit ? 1 : 0.75,
             }}
           >
             {hasSubmission
               ? <><Check size={13} style={{ marginRight: '4px' }} /> Entregado</>
-              : <><Send size={13} style={{ marginRight: '4px' }} /> Entregar</>
+              : isPastDue
+                ? 'Entrega cerrada'
+                : <><Send size={13} style={{ marginRight: '4px' }} /> Entregar</>
             }
           </button>
 
@@ -311,7 +400,7 @@ const StudentClassroomView = () => {
             <div>
               <p style={styles.summaryLabel}>Progreso general</p>
               <p style={styles.summaryScore}>
-                {currentProgress.pct}%
+                {isWorkshop ? `${currentProgress.pct} pts` : `${currentProgress.pct}%`}
                 <span style={{
                   ...styles.summaryStatus,
                   color: currentProgress.pct >= 70 ? '#10B981' : '#EF4444',
@@ -423,27 +512,101 @@ const StudentClassroomView = () => {
             )}
           </div>
         )}
+
+        {/* RECUPERACIONES */}
+        {recoveries.length > 0 && (
+          <div style={styles.section}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Recuperaciones</h2>
+            </div>
+            <div style={styles.recoveriesList}>
+              {recoveries.map(recovery => (
+                <div key={recovery.id} style={styles.recoveryCard}>
+                  <div style={styles.recoveryHeader}>
+                    <div>
+                      <h3 style={styles.recoveryTitle}>Intento #{recovery.attempt_number}</h3>
+                      <p style={styles.recoveryDesc}>{recovery.description}</p>
+                    </div>
+                    <div style={styles.recoveryScoreArea}>
+                      {recovery.score !== null ? (
+                        <div style={{
+                          ...styles.recoveryScoreBadge,
+                          backgroundColor: recovery.passed ? '#ECFDF5' : '#FEF2F2',
+                          color: recovery.passed ? '#10B981' : '#EF4444',
+                        }}>
+                          {recovery.score}/70
+                        </div>
+                      ) : (
+                        <span style={styles.recoveryPending}>Pendiente de calificación</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={styles.recoveryAssignmentActions}>
+                    <button
+                      onClick={() => openRecoverySubmitModal(recovery)}
+                      disabled={!!recovery.score}
+                      style={{
+                        ...styles.submitBtn,
+                        backgroundColor: recovery.submitted_at ? '#ECFDF5' : '#EEF2FF',
+                        color: recovery.submitted_at ? '#10B981' : '#6C63FF',
+                        border: `1.5px solid ${recovery.submitted_at ? '#A7F3D0' : '#C7D2FE'}`,
+                        cursor: recovery.score ? 'not-allowed' : 'pointer',
+                        opacity: recovery.score ? 0.7 : 1,
+                      }}
+                    >
+                      {recovery.submitted_at
+                        ? <><Check size={13} style={{ marginRight: '4px' }} /> Entregada</>
+                        : <><Send size={13} style={{ marginRight: '4px' }} /> Entregar recuperacion</>
+                      }
+                    </button>
+                    {recovery.due_date && (
+                      <span style={styles.recoveryDate}>
+                        Fecha limite: {new Date(recovery.due_date).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  <div style={styles.recoveryMeta}>
+                    <span style={styles.recoveryDate}>
+                      Creada: {new Date(recovery.created_at).toLocaleDateString()}
+                    </span>
+                    {recovery.graded_at && (
+                      <span style={styles.recoveryDate}>
+                        Calificada: {new Date(recovery.graded_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal entregar tarea */}
-      {showSubmitModal && selectedActivity && (
+      {showSubmitModal && (selectedActivity || selectedRecovery) && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
             <div style={styles.modalHeader}>
               <div>
-                <h2 style={styles.modalTitle}>Entregar tarea</h2>
-                <p style={styles.modalSubtitle}>{selectedActivity.name}</p>
+                <h2 style={styles.modalTitle}>{selectedRecovery ? 'Entregar recuperacion' : 'Entregar tarea'}</h2>
+                <p style={styles.modalSubtitle}>{selectedRecovery ? `Intento #${selectedRecovery.attempt_number}` : selectedActivity.name}</p>
               </div>
-              <button onClick={() => setShowSubmitModal(false)} style={styles.closeBtn}>
+              <button onClick={() => { setShowSubmitModal(false); setSelectedRecovery(null) }} style={styles.closeBtn}>
                 <X size={20} />
               </button>
             </div>
 
             <div style={styles.modalBody}>
-              {submissions[selectedActivity.id] && (
+              {selectedActivity && submissions[selectedActivity.id] && (
                 <div style={styles.infoBox}>
                   <Check size={14} style={{ marginRight: '6px' }} />
                   Ya tienes una entrega. Puedes actualizarla.
+                </div>
+              )}
+              {selectedRecovery?.submitted_at && (
+                <div style={styles.infoBox}>
+                  <Check size={14} style={{ marginRight: '6px' }} />
+                  Ya entregaste esta recuperacion. Puedes actualizarla mientras no este calificada.
                 </div>
               )}
 
@@ -502,7 +665,7 @@ const StudentClassroomView = () => {
             </div>
 
             <div style={styles.modalFooter}>
-              <button onClick={() => setShowSubmitModal(false)} style={styles.cancelBtn}>
+              <button onClick={() => { setShowSubmitModal(false); setSelectedRecovery(null) }} style={styles.cancelBtn}>
                 Cancelar
               </button>
               <button
@@ -596,6 +759,17 @@ const styles = {
   errorBox: { backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', padding: '10px 14px', borderRadius: '10px', fontSize: '13px' },
   primaryButton: { display: 'flex', alignItems: 'center', padding: '10px 18px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #6C63FF, #4FACFE)', color: '#fff', fontSize: '14px', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 12px rgba(108, 99, 255, 0.3)' },
   cancelBtn: { padding: '10px 18px', borderRadius: '12px', border: '1.5px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  recoveriesList: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  recoveryCard: { backgroundColor: '#ffffff', border: '1px solid #F1F5F9', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+  recoveryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' },
+  recoveryTitle: { fontSize: '14px', fontWeight: '600', color: '#1E293B', margin: '0 0 4px' },
+  recoveryDesc: { fontSize: '13px', color: '#64748B', margin: 0 },
+  recoveryScoreArea: { display: 'flex', alignItems: 'center' },
+  recoveryScoreBadge: { padding: '4px 10px', borderRadius: '8px', fontSize: '13px', fontWeight: '600' },
+  recoveryPending: { fontSize: '12px', color: '#F97316', fontStyle: 'italic' },
+  recoveryAssignmentActions: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' },
+  recoveryMeta: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' },
+  recoveryDate: { fontSize: '11px', color: '#94A3B8' },
 }
 
 export default StudentClassroomView

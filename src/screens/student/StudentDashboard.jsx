@@ -21,8 +21,6 @@ const StudentDashboard = () => {
 
   const [tutors, setTutors] = useState([])
   const [tutorsLoading, setTutorsLoading] = useState(false)
-  const [showAddTutor, setShowAddTutor] = useState(false)
-  const [tutorForm, setTutorForm] = useState({ fullName: '', email: '', password: '' })
   const [tutorFormLoading, setTutorFormLoading] = useState(false)
   const [tutorError, setTutorError] = useState('')
   const [success, setSuccess] = useState('')
@@ -128,43 +126,6 @@ const StudentDashboard = () => {
     }
   }
 
-  const handleAddTutor = async () => {
-    if (!tutorForm.fullName || !tutorForm.email || !tutorForm.password) {
-      setTutorError('Todos los campos son obligatorios.')
-      return
-    }
-    if (tutorForm.password.length < 6) {
-      setTutorError('La contraseña debe tener al menos 6 caracteres.')
-      return
-    }
-    setTutorFormLoading(true)
-    setTutorError('')
-    try {
-      const res = await fetch('http://localhost:3001/api/create-tutor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: tutorForm.email.trim(),
-          full_name: tutorForm.fullName.trim(),
-          password: tutorForm.password,
-          institution_id: profile.institution_id,
-          created_by: profile.id,
-          student_id: profile.id,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Ocurrió un error.')
-      showSuccessMsg('Tutor agregado exitosamente.')
-      setShowAddTutor(false)
-      setTutorForm({ fullName: '', email: '', password: '' })
-      fetchTutors()
-    } catch (err) {
-      setTutorError(err.message || 'Ocurrió un error.')
-    } finally {
-      setTutorFormLoading(false)
-    }
-  }
-
   const handleRemoveTutor = async (tutorId) => {
     try {
       const res = await fetch('http://localhost:3001/api/delete-tutor', {
@@ -193,11 +154,6 @@ const StudentDashboard = () => {
             style={{ ...styles.navItem, ...(activeTab === 'subjects' ? styles.navActive : {}) }}
             onClick={() => setActiveTab('subjects')}>
             <BookOpen size={18} /><span>Mis materias</span>
-          </div>
-          <div
-            style={{ ...styles.navItem, ...(activeTab === 'tutors' ? styles.navActive : {}) }}
-            onClick={() => setActiveTab('tutors')}>
-            <Users size={18} /><span>Mis tutores</span>
           </div>
           <div
             style={{ ...styles.navItem, ...(activeTab === 'profile' ? styles.navActive : {}) }}
@@ -229,13 +185,6 @@ const StudentDashboard = () => {
             </h1>
             <p style={styles.pageSubtitle}>Bienvenido, {profile?.full_name}</p>
           </div>
-          {activeTab === 'tutors' && (
-            <button
-              onClick={() => { setShowAddTutor(!showAddTutor); setTutorError('') }}
-              style={styles.primaryButton}>
-              <Plus size={16} style={{ marginRight: '6px' }} />Agregar tutor
-            </button>
-          )}
         </div>
 
         {success && (
@@ -332,58 +281,10 @@ const StudentDashboard = () => {
 
         {activeTab === 'tutors' && (
           <div style={styles.section}>
-            {showAddTutor && (
-              <div style={styles.addTutorBox}>
-                <h3 style={styles.addTutorTitle}>Agregar tutor / padre</h3>
-                <p style={styles.addTutorHint}>
-                  Tu tutor podrá iniciar sesión con estas credenciales y ver el progreso de tus materias.
-                </p>
-                <div style={styles.formGrid}>
-                  <div style={styles.fieldGroup}>
-                    <label style={styles.label}>Nombre completo</label>
-                    <input style={styles.input} placeholder="Ej: María García"
-                      value={tutorForm.fullName}
-                      onChange={e => { setTutorForm(p => ({ ...p, fullName: e.target.value })); setTutorError('') }}
-                      onFocus={e => e.target.style.borderColor = '#6C63FF'}
-                      onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
-                  </div>
-                  <div style={styles.fieldGroup}>
-                    <label style={styles.label}>Correo electrónico</label>
-                    <input style={styles.input} type="email" placeholder="correo@email.com"
-                      value={tutorForm.email}
-                      onChange={e => { setTutorForm(p => ({ ...p, email: e.target.value })); setTutorError('') }}
-                      onFocus={e => e.target.style.borderColor = '#6C63FF'}
-                      onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
-                  </div>
-                  <div style={styles.fieldGroup}>
-                    <label style={styles.label}>Contraseña</label>
-                    <input style={styles.input} type="password" placeholder="Mínimo 6 caracteres"
-                      value={tutorForm.password}
-                      onChange={e => { setTutorForm(p => ({ ...p, password: e.target.value })); setTutorError('') }}
-                      onFocus={e => e.target.style.borderColor = '#6C63FF'}
-                      onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
-                  </div>
-                </div>
-                {tutorError && <div style={styles.errorBox}>{tutorError}</div>}
-                <div style={styles.addTutorBtns}>
-                  <button
-                    onClick={() => {
-                      setShowAddTutor(false)
-                      setTutorForm({ fullName: '', email: '', password: '' })
-                      setTutorError('')
-                    }}
-                    style={styles.cancelBtn}>
-                    Cancelar
-                  </button>
-                  <button onClick={handleAddTutor} disabled={tutorFormLoading}
-                    style={{ ...styles.primaryButton, opacity: tutorFormLoading ? 0.7 : 1 }}>
-                    {tutorFormLoading ? 'Agregando...' : 'Agregar tutor'}
-                  </button>
-                </div>
-              </div>
-            )}
-
             <h2 style={styles.sectionTitle}>Tutores con acceso a mis notas</h2>
+            <p style={{ fontSize: '13px', color: '#64748B', margin: '-8px 0 18px' }}>
+              Los tutores son gestionados por el administrador junto con la seccion del estudiante.
+            </p>
 
             {tutorsLoading ? (
               <p style={styles.emptyText}>Cargando...</p>
@@ -412,9 +313,6 @@ const StudentDashboard = () => {
                       </div>
                       <div style={styles.tutorActions}>
                         <span style={styles.tutorBadge}>Acceso activo</span>
-                        <button onClick={() => handleRemoveTutor(tutor?.id)} style={styles.deleteBtn}>
-                          <Trash2 size={14} />
-                        </button>
                       </div>
                     </div>
                   )
